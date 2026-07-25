@@ -1,3 +1,29 @@
+# ---- Project-specific ----
+
+# Secrets — NEVER commit these
+.env
+*.env
+classbrain.env
+almanac.env
+
+# The bot's memory — real class data, not for a repo
+classbrain.db
+classbrain.db-journal
+classbrain.db-wal
+classbrain.db-shm
+almanac.db
+almanac.db-journal
+almanac.db-wal
+almanac.db-shm
+*.sqlite
+*.sqlite3
+
+# macOS
+.DS_Store
+
+
+# ---- Standard Python (GitHub template) ----
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
