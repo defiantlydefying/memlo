@@ -16,7 +16,7 @@ if not os.environ.get("ANTHROPIC_API_KEY"):
 
 # Work on a throwaway copy so a test run can't touch the bot's real memory.
 tmp = os.path.join(tempfile.mkdtemp(), "test.db")
-shutil.copy("classbrain.db", tmp)
+shutil.copy("almanac.db", tmp)
 bot.DB_PATH = tmp
 bot.init_db()
 

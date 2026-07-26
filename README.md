@@ -1,4 +1,4 @@
-# ClassBrain
+# Almanac
 
 An AI bot that lives in your class group chat and becomes its memory —
 tracks deadlines, remembers what the teacher said, and reminds the group
@@ -33,7 +33,7 @@ before things are due. (YC Fall 2026 application project.)
 ## Where things are
 
 - `bot.py` — the whole bot
-- `classbrain.db` — the memory (SQLite, created on first run)
+- `almanac.db` — the memory (SQLite, created on first run)
 - `requirements.txt` — the libraries to install
 
 ## Build order

@@ -1,10 +1,10 @@
 """
-ClassBrain — the magic loop
+Almanac — the magic loop
 A Discord bot that is the memory of your class group chat.
 
   1. LISTENS to every message and, using Claude Haiku, decides if it's worth
      remembering (a deadline or a teacher announcement). Saves it to a database.
-  2. ANSWERS when you @-mention it ("@ClassBrain what's due?") using Claude Sonnet,
+  2. ANSWERS when you @-mention it ("@Almanac what's due?") using Claude Sonnet,
      pulling from everything it has remembered.
   3. REMINDS the group on its own when something is due soon — nobody has to ask.
      This is the "it just knew" moment.
@@ -40,7 +40,7 @@ import anthropic
 
 DETECTOR_MODEL = "claude-haiku-4-5"   # cheap, runs on every message
 ANSWER_MODEL = "claude-sonnet-5"      # smarter, only runs when asked or reminding
-DB_PATH = "classbrain.db"             # the bot's memory file
+DB_PATH = "almanac.db"             # the bot's memory file
 
 # The only image formats Claude can read. An iPhone photo uploaded from a Mac
 # arrives as image/heic and has to be converted first.
@@ -932,7 +932,7 @@ def answer_question(question, deadlines, notes, materials, asker_roles=None) -> 
     what's actually for them."""
     memory = _format_memory(deadlines, notes, materials)
     roles = ", ".join(asker_roles) if asker_roles else "(no specific roles/grade)"
-    prompt = f"""You are ClassBrain, a helpful bot that remembers what happens in
+    prompt = f"""You are Almanac, a helpful bot that remembers what happens in
 a class group chat. Here is everything you currently remember:
 
 {memory}
@@ -967,7 +967,7 @@ def compose_reminder(deadline, notes) -> str:
     audience_line = (f'\nThis one is specifically for: {who}. Name them so the wrong '
                      f'grade/class doesn\'t worry — e.g. "Heads up 7th graders:".'
                      if who else "")
-    prompt = f"""You are ClassBrain in a class group chat. Write a SHORT, casual,
+    prompt = f"""You are Almanac in a class group chat. Write a SHORT, casual,
 friendly reminder (one or two sentences) that nobody asked for — a heads-up.
 
 Deadline: {deadline["summary"]} — due {deadline["due_date"]}.{audience_line}
@@ -995,7 +995,7 @@ def make_quiz(request_text, notes, materials) -> dict:
     material_text = "\n\n".join(
         f'From {m["filename"]}:\n{m["digest"]}' for m in materials
     ) or "  (none uploaded yet)"
-    prompt = f"""You are ClassBrain, the study bot for a class group chat. A student
+    prompt = f"""You are Almanac, the study bot for a class group chat. A student
 asked you to quiz the group. Their message: "{request_text}"
 
 Class notes:
@@ -1031,7 +1031,7 @@ Respond with ONLY a JSON object in exactly this shape:
 
 def grade_answers(quiz_text, reply_text, student) -> dict:
     """Sonnet: mark someone's reply to a quiz, however they chose to write it."""
-    prompt = f"""You are ClassBrain, the study bot for a class group chat. Here is
+    prompt = f"""You are Almanac, the study bot for a class group chat. Here is
 the quiz you posted, together with the private answer key the students cannot see:
 
 {quiz_text}
@@ -1333,7 +1333,7 @@ async def read_attachments(message: discord.Message):
     together = " (I'll treat them as one set)" if len(ingested) > 1 else ""
     await message.channel.send(
         f"📥 Got {files} — {', '.join(topics)}. I've studied {'them' if len(ingested) > 1 else 'it'}"
-        f"{together}. Try: `@ClassBrain quiz us on it`")
+        f"{together}. Try: `@Almanac quiz us on it`")
 
     relation = await asyncio.to_thread(
         relate_upload, message.clean_content.strip(), topics[0], prior_groups)
@@ -1392,7 +1392,7 @@ async def read_links(message: discord.Message, urls):
         print(f" INGESTED LINK: {url} [{result['topic']}]")
         await message.channel.send(
             f"🔗 Read **{fetched['label']}** — {result['topic']}. I've studied it. "
-            "Try: `@ClassBrain quiz us on it`")
+            "Try: `@Almanac quiz us on it`")
 
 
 def _real_roles(member):
@@ -1427,7 +1427,7 @@ def _is_for_bot(message: discord.Message) -> bool:
     """Is this message aimed at us? Counts a direct @mention of the bot AND a
     mention of the bot's own auto-created role. Discord makes a managed role with
     the bot's name when it joins, and people pick that role from the @-autocomplete
-    just as often as the bot user itself — without this, "@ClassBrain what's due?"
+    just as often as the bot user itself — without this, "@Almanac what's due?"
     falls through and gets filed away as chatter."""
     if bot.user in message.mentions:
         return True
@@ -1468,7 +1468,7 @@ async def handle_admin_command(message: discord.Message) -> bool:
         if not rows:
             await message.reply(
                 "I'm not narrowed to any categories here, so I'm listening in **every** "
-                "channel. Run `@ClassBrain activate` inside a class category (like a "
+                "channel. Run `@Almanac activate` inside a class category (like a "
                 "grade) to limit me to just your class channels.")
         else:
             names = "\n".join(f"  • {r['name']}" for r in rows)
@@ -1499,7 +1499,7 @@ async def handle_admin_command(message: discord.Message) -> bool:
         await message.reply(
             f"🛑 Stopped tracking the **{category.name}** category — I'll ignore its "
             "channels now. (What I already remembered is still there; say "
-            "`@ClassBrain forget me` in a channel to clear your own.)")
+            "`@Almanac forget me` in a channel to clear your own.)")
         print(f" DEACTIVATED category {category.name} ({category.id})")
     return True
 
