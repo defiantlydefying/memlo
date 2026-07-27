@@ -27,7 +27,7 @@ import base64
 import asyncio
 import sqlite3
 import ipaddress
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -686,6 +686,35 @@ async def _read_capped(resp):
     return b"".join(chunks)
 
 
+def _sniff_type(data):
+    """The real media type of a downloaded body, read from its first bytes.
+
+    Google Drive's download endpoint labels nearly everything application/octet-stream,
+    so trusting the Content-Type header alone makes us reject PDFs and photos we can
+    actually read. Returns a media type, or None if the bytes aren't anything we handle."""
+    if data.startswith(b"%PDF-"):
+        return "application/pdf"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    # No magic number. If it decodes cleanly and reads as printable characters it's a
+    # text file (someone's .txt/.md/.csv notes); otherwise it's a binary we can't use.
+    head = data[:2048]
+    if not head:
+        return None
+    try:
+        text = head.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    printable = sum(ch.isprintable() or ch in "\r\n\t" for ch in text)
+    return "text/plain" if printable / len(text) > 0.9 else None
+
+
 async def fetch_link(url):
     """Fetch one URL and normalise it into what ingest_attachment expects. Returns a
     dict {label, media_type, data(bytes), is_text, snippet} on success, or {"error": ...}.
@@ -711,16 +740,33 @@ async def fetch_link(url):
                 if resp.status != 200:
                     return {"error": f"http {resp.status}"}
                 ctype = (resp.content_type or "").lower()
+                disposition = resp.headers.get("Content-Disposition", "")
                 data = await _read_capped(resp)
     except (aiohttp.ClientError, asyncio.TimeoutError) as err:
         return {"error": f"fetch failed: {err}"}
 
     label = _label_from_url(url)
 
+    # Every Drive share link ends in /view, so the URL alone names the material "view".
+    # The download response carries the real filename — much better to remember it by.
+    name = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)', disposition)
+    if name:
+        label = unquote(name.group(1)).strip()[:80] or label
+
     # A Google export that comes back as HTML is the "you need access" sign-in page —
     # the doc isn't link-shared. Worth telling the poster about; they can fix it.
-    if forced in ("text", "pdf") and ctype.startswith("text/html"):
+    # Drive downloads ('auto') count too: a real file arrives as a PDF, an image, or
+    # some other binary, never as a web page. HTML there means Google served an
+    # interstitial instead of the file, and ingesting that would remember a sign-in
+    # page as class notes.
+    if forced and ctype.startswith("text/html"):
         return {"error": "private"}
+
+    # A server that won't say what it sent (Drive answers octet-stream for most files)
+    # leaves the bytes as the only evidence. Only override a header this uninformative —
+    # a server that names a real type is more reliable than a guess.
+    if ctype in ("", "application/octet-stream", "binary/octet-stream"):
+        ctype = _sniff_type(data) or ctype
 
     is_html = ctype.startswith("text/html")
     is_pdf = ctype == "application/pdf" or (forced == "pdf")
