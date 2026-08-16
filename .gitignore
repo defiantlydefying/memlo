@@ -4,22 +4,27 @@
 .env
 *.env
 classbrain.env
-almanac.env
+memlo.env
 
 # The bot's memory — real class data, not for a repo
 classbrain.db
 classbrain.db-journal
 classbrain.db-wal
 classbrain.db-shm
-almanac.db
-almanac.db-journal
-almanac.db-wal
-almanac.db-shm
+memlo.db
+memlo.db-journal
+memlo.db-wal
+memlo.db-shm
+backups/
+memlo.log*
 *.sqlite
 *.sqlite3
 
 # macOS
 .DS_Store
+
+# Local package-manager caches
+.pnpm-store/
 
 
 # ---- Standard Python (GitHub template) ----

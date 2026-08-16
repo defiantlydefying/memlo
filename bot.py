@@ -1,10 +1,10 @@
 """
-Almanac — the magic loop
+Memlo — the magic loop
 A Discord bot that is the memory of your class group chat.
 
   1. LISTENS to every message and, using Claude Haiku, decides if it's worth
      remembering (a deadline or a teacher announcement). Saves it to a database.
-  2. ANSWERS when you @-mention it ("@Almanac what's due?") using Claude Sonnet,
+  2. ANSWERS when you @-mention it ("@Memlo what's due?") using Claude Sonnet,
      pulling from everything it has remembered.
   3. REMINDS the group on its own when something is due soon — nobody has to ask.
      This is the "it just knew" moment.
@@ -27,12 +27,20 @@ import base64
 import asyncio
 import sqlite3
 import ipaddress
+import logging
+import sys
+import time as time_module
+from collections import defaultdict, deque
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from urllib.parse import urlparse, unquote
-from datetime import datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
 import aiohttp
+from aiohttp import web
+from discord import app_commands
 from discord.ext import tasks
 import anthropic
 
@@ -40,7 +48,13 @@ import anthropic
 
 DETECTOR_MODEL = "claude-haiku-4-5"   # cheap, runs on every message
 ANSWER_MODEL = "claude-sonnet-5"      # smarter, only runs when asked or reminding
-DB_PATH = "almanac.db"             # the bot's memory file
+DB_PATH = "memlo.db"             # the bot's memory file
+DEFAULT_TIMEZONE = os.environ.get("CLASS_TIMEZONE", "America/New_York")
+BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "backups"))
+BACKUP_RETENTION = int(os.environ.get("BACKUP_RETENTION", "14"))
+HEALTH_HOST = os.environ.get("HEALTH_HOST", "127.0.0.1")
+HEALTH_PORT = int(os.environ.get("HEALTH_PORT", "8080"))
+LOG_PATH = os.environ.get("LOG_PATH", "memlo.log")
 
 # The only image formats Claude can read. An iPhone photo uploaded from a Mac
 # arrives as image/heic and has to be converted first.
@@ -66,12 +80,44 @@ URL_RE = re.compile(r'https?://[^\s<>()\[\]{}"\'|\\^`]+', re.IGNORECASE)
 # Discord never tells a bot what timezone anyone is in, so reminders can't adapt
 # per-person — they go out on one clock, set here. Change this to your class's
 # timezone (any IANA name: "America/Los_Angeles", "Europe/London", ...).
-CLASS_TIMEZONE = ZoneInfo(os.environ.get("CLASS_TIMEZONE", "America/New_York"))
-REMIND_AT = [                         # the bot speaks up at these times, daily
-    time(hour=6, minute=0, tzinfo=CLASS_TIMEZONE),
-    time(hour=15, minute=0, tzinfo=CLASS_TIMEZONE),
-]
+CLASS_TIMEZONE = ZoneInfo(DEFAULT_TIMEZONE)  # fallback for legacy rows and tests
+REMIND_HOURS = (6, 15)               # evaluated in each server's own timezone
 QUIET_HOURS_AFTER_SAVING = 1          # don't parrot back something just announced
+
+PREFILTER_RE = re.compile(
+    r"\b(?:due|deadline|test|quiz|exam|homework|hw|assignment|project|essay|lab|"
+    r"worksheet|paper|presentation|submit|turn\s+in|study\s+guide|syllabus|"
+    r"cancelled|canceled|rescheduled|no\s+school|bring|allowed|open[- ]note|"
+    r"notes\s+allowed|teacher\s+said|class\s+schedule|school\s+schedule|reminder)\b",
+    re.IGNORECASE,
+)
+DATE_SIGNAL_RE = re.compile(
+    r"\b(?:tomorrow|tmr|tonight|today|monday|tuesday|wednesday|thursday|friday|"
+    r"saturday|sunday|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+    r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+    r"dec(?:ember)?)\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b",
+    re.IGNORECASE,
+)
+RELEVANT_ROLE_RE = re.compile(
+    r"\b(?:teacher|instructor|professor|faculty|staff|admin|moderator|tutor|ta)\b",
+    re.IGNORECASE,
+)
+
+RATE_LIMITS = {
+    "answer": (8, 60),
+    "quiz": (3, 300),
+    "grade": (10, 60),
+    "ingest": (5, 600),
+}
+
+LOGGER = logging.getLogger("memlo")
+_health = {
+    "started_at": datetime.now(timezone.utc).isoformat(),
+    "last_ready": None,
+    "last_reminder_tick": None,
+    "last_backup": None,
+    "last_error": None,
+}
 
 
 # --- The clock -----------------------------------------------------
@@ -85,12 +131,31 @@ QUIET_HOURS_AFTER_SAVING = 1          # don't parrot back something just announc
 # make them sort inconsistently against every row already in the database. The
 # wall-clock reading is simply always the class's.
 
-def class_now():
-    return datetime.now(CLASS_TIMEZONE).replace(tzinfo=None)
+def utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
 
-def class_today():
-    return class_now().date()
+def _timezone_for_guild(guild_id=None):
+    if guild_id is not None:
+        try:
+            conn = db()
+            row = conn.execute(
+                "SELECT timezone FROM guild_settings WHERE guild_id = ?", (guild_id,)
+            ).fetchone()
+            conn.close()
+            if row and row["timezone"]:
+                return ZoneInfo(row["timezone"])
+        except (sqlite3.Error, KeyError, ZoneInfoNotFoundError):
+            pass
+    return CLASS_TIMEZONE
+
+
+def class_now(guild_id=None):
+    return datetime.now(_timezone_for_guild(guild_id)).replace(tzinfo=None)
+
+
+def class_today(guild_id=None):
+    return class_now(guild_id).date()
 
 
 # --- Clients -------------------------------------------------------
@@ -100,8 +165,34 @@ claude = anthropic.Anthropic()
 intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
 
 _view_registered = False   # so a reconnect doesn't re-register the quiz button
+_commands_synced = False
+_health_runner = None
+_reminder_slots = {}
+
+
+class RateLimiter:
+    """Small in-memory sliding-window limiter; no message content is retained."""
+
+    def __init__(self):
+        self._events = defaultdict(deque)
+
+    def allow(self, action, guild_id, user_id, now=None):
+        limit, window = RATE_LIMITS[action]
+        now = time_module.monotonic() if now is None else now
+        key = (action, guild_id, user_id)
+        events = self._events[key]
+        while events and events[0] <= now - window:
+            events.popleft()
+        if len(events) >= limit:
+            return False
+        events.append(now)
+        return True
+
+
+rate_limiter = RateLimiter()
 
 
 # --- The database (the bot's memory) -------------------------------
@@ -109,7 +200,14 @@ _view_registered = False   # so a reconnect doesn't re-register the quiz button
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row   # lets us read columns by name
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def _add_column(conn, table, column, declaration):
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 def init_db():
@@ -126,12 +224,11 @@ def init_db():
             created_at TEXT         -- when we heard about it, ISO 8601
         )
     """)
-    # Migration for databases created before created_at / audience existed.
-    columns = [row["name"] for row in conn.execute("PRAGMA table_info(deadlines)")]
-    if "created_at" not in columns:
-        conn.execute("ALTER TABLE deadlines ADD COLUMN created_at TEXT")
-    if "audience" not in columns:
-        conn.execute("ALTER TABLE deadlines ADD COLUMN audience TEXT")
+    for column, declaration in (
+        ("created_at", "TEXT"), ("audience", "TEXT"),
+        ("guild_id", "INTEGER"), ("author_id", "INTEGER"),
+    ):
+        _add_column(conn, "deadlines", column, declaration)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS notes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,9 +240,11 @@ def init_db():
             audience TEXT           -- who it's for ("7th Grade"), or "" = everyone
         )
     """)
-    note_cols = [row["name"] for row in conn.execute("PRAGMA table_info(notes)")]
-    if "audience" not in note_cols:
-        conn.execute("ALTER TABLE notes ADD COLUMN audience TEXT")
+    for column, declaration in (
+        ("audience", "TEXT"), ("guild_id", "INTEGER"),
+        ("author_id", "INTEGER"), ("created_at", "TEXT"),
+    ):
+        _add_column(conn, "notes", column, declaration)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS quizzes (
             message_id INTEGER PRIMARY KEY,   -- the bot's own quiz message
@@ -154,6 +253,8 @@ def init_db():
             created_at TEXT
         )
     """)
+    _add_column(conn, "quizzes", "guild_id", "INTEGER")
+    _add_column(conn, "quizzes", "author_id", "INTEGER")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS active_categories (
             category_id INTEGER PRIMARY KEY,   -- a Discord category the bot tracks
@@ -163,6 +264,7 @@ def init_db():
             created_at TEXT
         )
     """)
+    _add_column(conn, "active_categories", "activated_by_id", "INTEGER")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS materials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,11 +278,67 @@ def init_db():
             created_at TEXT
         )
     """)
-    # Migration for databases created before topic/quiz_group/created_at existed.
-    columns = [row["name"] for row in conn.execute("PRAGMA table_info(materials)")]
-    for col in ("topic", "quiz_group", "created_at"):
-        if col not in columns:
-            conn.execute(f"ALTER TABLE materials ADD COLUMN {col} TEXT")
+    for column, declaration in (
+        ("topic", "TEXT"), ("quiz_group", "TEXT"), ("created_at", "TEXT"),
+        ("guild_id", "INTEGER"), ("author_id", "INTEGER"),
+    ):
+        _add_column(conn, "materials", column, declaration)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS guild_settings (
+            guild_id INTEGER PRIMARY KEY,
+            timezone TEXT NOT NULL,
+            installer_id INTEGER,
+            installed_at TEXT NOT NULL,
+            setup_status TEXT NOT NULL DEFAULT 'pending',
+            setup_completed_at TEXT,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tracked_channels (
+            channel_id INTEGER PRIMARY KEY,
+            guild_id INTEGER NOT NULL,
+            name TEXT,
+            activated_by_id INTEGER,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS analytics_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_name TEXT NOT NULL,
+            guild_id INTEGER,
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS operational_errors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            context TEXT NOT NULL,
+            exception_type TEXT NOT NULL,
+            guild_id INTEGER,
+            created_at TEXT NOT NULL
+        )
+    """)
+    _add_column(conn, "operational_errors", "guild_id", "INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_deadlines_guild ON deadlines(guild_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(guild_id, author_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_materials_user ON materials(guild_id, author_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_analytics_guild ON analytics_events(guild_id, event_name)")
+
+    # Existing category-scoped installations stay configured after this migration.
+    # Brand-new guilds get a pending row through on_guild_join/on_ready and track nothing.
+    for row in conn.execute(
+            "SELECT DISTINCT guild_id FROM active_categories WHERE guild_id IS NOT NULL"):
+        now = utc_now_iso()
+        conn.execute(
+            "INSERT OR IGNORE INTO guild_settings "
+            "(guild_id, timezone, installed_at, setup_status, setup_completed_at, updated_at) "
+            "VALUES (?, ?, ?, 'configured', ?, ?)",
+            (row["guild_id"], DEFAULT_TIMEZONE, now, now, now),
+        )
     # Group old material the same way new material is grouped: by the message it was
     # uploaded on. A jump_url ends in the message id, so files posted together —
     # e.g. two pages of the same chapter — land in one group retroactively. Anything
@@ -217,30 +375,34 @@ def _topic_from_digest(digest, filename):
     return filename
 
 
-def save_deadline(summary, due_date, author, channel_id, link, audience=""):
+def save_deadline(summary, due_date, author, channel_id, link, audience="",
+                  guild_id=None, author_id=None):
     conn = db()
     conn.execute(
         "INSERT INTO deadlines (summary, due_date, author, channel_id, link, "
-        "created_at, audience) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (summary, due_date, author, channel_id, link, class_now().isoformat(), audience),
+        "created_at, audience, guild_id, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (summary, due_date, author, channel_id, link,
+         class_now(guild_id).isoformat(), audience, guild_id, author_id),
     )
     conn.commit()
     conn.close()
 
 
-def save_note(summary, original_text, author, channel_id, link, audience=""):
+def save_note(summary, original_text, author, channel_id, link, audience="",
+              guild_id=None, author_id=None):
     conn = db()
     conn.execute(
-        "INSERT INTO notes (summary, original_text, author, channel_id, link, audience) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (summary, original_text, author, channel_id, link, audience),
+        "INSERT INTO notes (summary, original_text, author, channel_id, link, audience, "
+        "guild_id, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (summary, original_text, author, channel_id, link, audience,
+         guild_id, author_id, utc_now_iso()),
     )
     conn.commit()
     conn.close()
 
 
-def get_upcoming_deadlines(channel_id):
-    today = class_today().isoformat()
+def get_upcoming_deadlines(channel_id, guild_id=None):
+    today = class_today(guild_id).isoformat()
     conn = db()
     rows = conn.execute(
         "SELECT * FROM deadlines WHERE channel_id = ? AND due_date >= ? "
@@ -261,13 +423,14 @@ def get_notes(channel_id):
     return rows
 
 
-def save_material(filename, digest, author, channel_id, link, topic, quiz_group):
+def save_material(filename, digest, author, channel_id, link, topic, quiz_group,
+                  guild_id=None, author_id=None):
     conn = db()
     cur = conn.execute(
         "INSERT INTO materials (filename, digest, author, channel_id, link, topic, "
-        "quiz_group, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "quiz_group, created_at, guild_id, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (filename, digest, author, channel_id, link, topic, quiz_group,
-         class_now().isoformat()),
+         utc_now_iso(), guild_id, author_id),
     )
     conn.commit()
     material_id = cur.lastrowid
@@ -321,12 +484,12 @@ def merge_quiz_groups(source_group, target_group):
     conn.close()
 
 
-def save_quiz(message_id, channel_id, quiz_text):
+def save_quiz(message_id, channel_id, quiz_text, guild_id=None, author_id=None):
     conn = db()
     conn.execute(
-        "INSERT OR REPLACE INTO quizzes (message_id, channel_id, quiz_text, created_at) "
-        "VALUES (?, ?, ?, ?)",
-        (message_id, channel_id, quiz_text, class_now().isoformat()),
+        "INSERT OR REPLACE INTO quizzes (message_id, channel_id, quiz_text, created_at, "
+        "guild_id, author_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (message_id, channel_id, quiz_text, utc_now_iso(), guild_id, author_id),
     )
     conn.commit()
     conn.close()
@@ -353,21 +516,23 @@ def get_quiz_questions(message_id):
     return questions.replace("QUESTIONS (posted to the chat):", "", 1).strip()
 
 
-def get_due_soon_unreminded():
+def get_due_soon_unreminded(guild_id):
     """Deadlines due within the next few days that we haven't reminded about yet.
 
     Skips anything announced in the last hour — if someone posts a deadline at
     2:55pm, echoing it back at the 3pm reminder reads as the bot not listening.
     The "it just knew" moment only lands once everyone has forgotten.
     """
-    today = class_today()
+    today = class_today(guild_id)
     window = (today + timedelta(days=REMIND_WITHIN_DAYS)).isoformat()
-    quiet_until = (class_now() - timedelta(hours=QUIET_HOURS_AFTER_SAVING)).isoformat()
+    quiet_until = (class_now(guild_id) - timedelta(
+        hours=QUIET_HOURS_AFTER_SAVING)).isoformat()
     conn = db()
     rows = conn.execute(
-        "SELECT * FROM deadlines WHERE reminded = 0 AND due_date >= ? AND due_date <= ? "
+        "SELECT * FROM deadlines WHERE guild_id = ? AND reminded = 0 "
+        "AND due_date >= ? AND due_date <= ? "
         "AND (created_at IS NULL OR created_at <= ?)",
-        (today.isoformat(), window, quiet_until),
+        (guild_id, today.isoformat(), window, quiet_until),
     ).fetchall()
     conn.close()
     return rows
@@ -380,38 +545,106 @@ def mark_reminded(deadline_id):
     conn.close()
 
 
-# Everything a person contributes is attributed by the display name we stored when we
-# saw it (there's no user id in the schema). So "forget me" matches on display name in
-# the current channel — which is the common case, but its limits are honest ones: it
-# won't catch data saved under a since-changed name, and two people sharing a display
-# name would match each other. Quizzes aren't attributed to anyone, so nothing there
-# to forget. Both functions scope to one channel because that's how all memory is
-# scoped — the schema has no server id to widen to.
 _USER_TABLES = ("deadlines", "notes", "materials")
 
 
 def count_user_data(author, channel_id):
     conn = db()
     counts = {t: conn.execute(
-        f"SELECT COUNT(*) FROM {t} WHERE author = ? AND channel_id = ?",
+        f"SELECT COUNT(*) FROM {t} WHERE author_id IS NULL AND author = ? AND channel_id = ?",
         (author, channel_id)).fetchone()[0] for t in _USER_TABLES}
     conn.close()
     return counts
 
 
 def forget_user(author, channel_id):
-    """Delete everything this person contributed to this channel. Returns per-table
-    counts of what was actually removed."""
+    """Legacy display-name deletion for records created before Stage 0."""
     conn = db()
     counts = {}
     for t in _USER_TABLES:
         cur = conn.execute(
-            f"DELETE FROM {t} WHERE author = ? AND channel_id = ?",
+            f"DELETE FROM {t} WHERE author_id IS NULL AND author = ? AND channel_id = ?",
             (author, channel_id))
         counts[t] = cur.rowcount
     conn.commit()
     conn.close()
     return counts
+
+
+def count_user_data_by_id(user_id, guild_id):
+    conn = db()
+    counts = {table: conn.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE author_id = ? AND guild_id = ?",
+        (user_id, guild_id)).fetchone()[0] for table in _USER_TABLES}
+    counts["quizzes"] = conn.execute(
+        "SELECT COUNT(*) FROM quizzes WHERE author_id = ? AND guild_id = ?",
+        (user_id, guild_id)).fetchone()[0]
+    conn.close()
+    return counts
+
+
+def forget_user_by_id(user_id, guild_id):
+    """Delete everything attributable to a Discord user across one server."""
+    conn = db()
+    counts = {}
+    for table in _USER_TABLES + ("quizzes",):
+        cur = conn.execute(
+            f"DELETE FROM {table} WHERE author_id = ? AND guild_id = ?",
+            (user_id, guild_id))
+        counts[table] = cur.rowcount
+    conn.commit()
+    conn.close()
+    return counts
+
+
+TELEMETRY_EVENTS = {
+    "install", "setup_complete", "first_deadline_saved", "first_answer",
+    "first_reminder", "first_quiz_completed", "referral_link_shown", "removal",
+}
+TELEMETRY_PROPERTY_ALLOWLIST = {"scope_type", "timezone", "source", "count"}
+
+
+def record_event(event_name, guild_id=None, properties=None, once=False):
+    """Store product events only; message text and filenames are never accepted."""
+    if event_name not in TELEMETRY_EVENTS:
+        raise ValueError(f"Unsupported telemetry event: {event_name}")
+    clean = {
+        key: value for key, value in (properties or {}).items()
+        if key in TELEMETRY_PROPERTY_ALLOWLIST
+        and isinstance(value, (str, int, float, bool, type(None)))
+    }
+    conn = db()
+    if once and conn.execute(
+            "SELECT 1 FROM analytics_events WHERE event_name = ? AND guild_id IS ?",
+            (event_name, guild_id)).fetchone():
+        conn.close()
+        return False
+    conn.execute(
+        "INSERT INTO analytics_events (event_name, guild_id, properties_json, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (event_name, guild_id, json.dumps(clean, sort_keys=True), utc_now_iso()),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def record_operational_error(context, exc, guild_id=None):
+    """Record a content-free error marker for health checks and operations."""
+    global _health
+    happened = utc_now_iso()
+    _health["last_error"] = happened
+    try:
+        conn = db()
+        conn.execute(
+            "INSERT INTO operational_errors (context, exception_type, guild_id, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (context[:100], type(exc).__name__[:100], guild_id, happened),
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.Error:
+        LOGGER.exception("Could not record operational error")
 
 
 # --- Which channels the bot tracks (grade/class scoping) -----------
@@ -421,16 +654,61 @@ def forget_user(author, channel_id):
 # Everything the bot remembers is already scoped per channel_id, so one channel per
 # class keeps 7th-grade science and 8th-grade math completely separate on their own.
 #
-# Default when a server has activated NOTHING: track every channel — so a small,
-# single-class server (like a test server) works out of the box, and gating only
-# narrows things once an admin opts specific categories in.
+# A server tracks NOTHING until an admin explicitly completes /setup. This opt-in
+# invariant is central to privacy, predictable cost, and Message Content approval.
 
-def activate_category(category_id, guild_id, name, activated_by):
+
+def ensure_guild_settings(guild_id, installer_id=None):
+    now = utc_now_iso()
+    conn = db()
+    conn.execute(
+        "INSERT OR IGNORE INTO guild_settings "
+        "(guild_id, timezone, installer_id, installed_at, setup_status, updated_at) "
+        "VALUES (?, ?, ?, ?, 'pending', ?)",
+        (guild_id, DEFAULT_TIMEZONE, installer_id, now, now),
+    )
+    if installer_id is not None:
+        conn.execute(
+            "UPDATE guild_settings SET installer_id = COALESCE(installer_id, ?), "
+            "updated_at = ? WHERE guild_id = ?",
+            (installer_id, now, guild_id),
+        )
+    conn.commit()
+    row = conn.execute(
+        "SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def configure_guild(guild_id, timezone_name, installer_id):
+    ZoneInfo(timezone_name)  # validate before writing
+    ensure_guild_settings(guild_id, installer_id)
+    now = utc_now_iso()
+    conn = db()
+    conn.execute(
+        "UPDATE guild_settings SET timezone = ?, installer_id = COALESCE(installer_id, ?), "
+        "setup_status = 'configured', setup_completed_at = COALESCE(setup_completed_at, ?), "
+        "updated_at = ? WHERE guild_id = ?",
+        (timezone_name, installer_id, now, now, guild_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_guild_settings(guild_id):
+    conn = db()
+    row = conn.execute(
+        "SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,)).fetchone()
+    conn.close()
+    return row
+
+def activate_category(category_id, guild_id, name, activated_by, activated_by_id=None):
     conn = db()
     conn.execute(
         "INSERT OR REPLACE INTO active_categories "
-        "(category_id, guild_id, name, activated_by, created_at) VALUES (?, ?, ?, ?, ?)",
-        (category_id, guild_id, name, activated_by, class_now().isoformat()))
+        "(category_id, guild_id, name, activated_by, activated_by_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (category_id, guild_id, name, activated_by, activated_by_id, utc_now_iso()))
     conn.commit()
     conn.close()
 
@@ -442,14 +720,40 @@ def deactivate_category(category_id):
     conn.close()
 
 
+def activate_channel(channel_id, guild_id, name, activated_by_id):
+    conn = db()
+    conn.execute(
+        "INSERT OR REPLACE INTO tracked_channels "
+        "(channel_id, guild_id, name, activated_by_id, created_at) VALUES (?, ?, ?, ?, ?)",
+        (channel_id, guild_id, name, activated_by_id, utc_now_iso()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def deactivate_channel(channel_id):
+    conn = db()
+    conn.execute("DELETE FROM tracked_channels WHERE channel_id = ?", (channel_id,))
+    conn.commit()
+    conn.close()
+
+
 def get_active_categories(guild_id):
-    """Set of category ids this server has opted in. Empty set means 'track all'."""
     conn = db()
     rows = conn.execute(
         "SELECT category_id FROM active_categories WHERE guild_id = ?",
         (guild_id,)).fetchall()
     conn.close()
     return {r["category_id"] for r in rows}
+
+
+def get_active_channels(guild_id):
+    conn = db()
+    rows = conn.execute(
+        "SELECT channel_id FROM tracked_channels WHERE guild_id = ?", (guild_id,)
+    ).fetchall()
+    conn.close()
+    return {r["channel_id"] for r in rows}
 
 
 def get_active_category_rows(guild_id):
@@ -461,18 +765,119 @@ def get_active_category_rows(guild_id):
     return rows
 
 
-def is_tracked(guild_id, category_id):
-    """Should the bot listen in a channel with this category? See the note above:
-    no opted-in categories -> track everything; otherwise only opted-in ones."""
+def is_tracked(guild_id, category_id, channel_id=None):
+    """True only after setup and only for an explicitly selected scope."""
     if guild_id is None:
         return False   # a DM: no class context to scope to
-    active = get_active_categories(guild_id)
-    if not active:
+    settings = get_guild_settings(guild_id)
+    if not settings or settings["setup_status"] != "configured":
+        return False
+    if channel_id is not None and channel_id in get_active_channels(guild_id):
         return True
-    return category_id in active
+    return category_id is not None and category_id in get_active_categories(guild_id)
+
+
+def delete_server_data(guild_id, reinitialize=True):
+    """Delete all memory, settings, and telemetry for one Discord server."""
+    conn = db()
+    counts = {}
+    for table in ("deadlines", "notes", "materials", "quizzes", "active_categories",
+                  "tracked_channels", "analytics_events", "operational_errors"):
+        cur = conn.execute(f"DELETE FROM {table} WHERE guild_id = ?", (guild_id,))
+        counts[table] = cur.rowcount
+    conn.execute("DELETE FROM guild_settings WHERE guild_id = ?", (guild_id,))
+    conn.commit()
+    conn.close()
+    if reinitialize:
+        ensure_guild_settings(guild_id)
+    return counts
+
+
+# --- Operations: logging, backups, and health ----------------------
+
+def setup_logging():
+    if LOGGER.handlers:
+        return
+    LOGGER.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s")
+    stream = logging.StreamHandler()
+    stream.setFormatter(formatter)
+    LOGGER.addHandler(stream)
+    if LOG_PATH:
+        rotating = RotatingFileHandler(
+            LOG_PATH, maxBytes=5 * 1024 * 1024, backupCount=3)
+        rotating.setFormatter(formatter)
+        LOGGER.addHandler(rotating)
+
+
+def backup_database():
+    """Take a transactionally consistent SQLite backup and prune old snapshots."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = BACKUP_DIR / f"memlo-{stamp}.db"
+    source = db()
+    destination = sqlite3.connect(target)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    backups = sorted(BACKUP_DIR.glob("memlo-*.db"), reverse=True)
+    for old in backups[max(BACKUP_RETENTION, 1):]:
+        old.unlink()
+    _health["last_backup"] = utc_now_iso()
+    return target
+
+
+async def health_handler(request):
+    database_ok = True
+    try:
+        conn = db()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+    except sqlite3.Error:
+        database_ok = False
+    ready = bot.is_ready()
+    status = "ok" if ready and database_ok else "degraded"
+    return web.json_response({
+        "status": status,
+        "discord_ready": ready,
+        "database_ok": database_ok,
+        "guild_count": len(bot.guilds),
+        **_health,
+    }, status=200 if status == "ok" else 503)
+
+
+async def start_health_server():
+    global _health_runner
+    if HEALTH_PORT <= 0 or _health_runner is not None:
+        return
+    app = web.Application()
+    app.router.add_get("/health", health_handler)
+    _health_runner = web.AppRunner(app)
+    await _health_runner.setup()
+    site = web.TCPSite(_health_runner, HEALTH_HOST, HEALTH_PORT)
+    await site.start()
+    LOGGER.info("Health endpoint listening on http://%s:%s/health",
+                HEALTH_HOST, HEALTH_PORT)
 
 
 # --- Claude: detect, answer, remind --------------------------------
+
+def should_analyze_message(message_text, poster_roles=None):
+    """Cheap local gate before the per-message classifier call.
+
+    It intentionally errs toward recall when a trusted school role is present, while
+    ordinary chatter without a deadline/date/announcement signal never leaves the VPS.
+    """
+    if PREFILTER_RE.search(message_text or ""):
+        return True
+    if any(RELEVANT_ROLE_RE.search(role or "") for role in (poster_roles or [])):
+        return True
+    return bool(DATE_SIGNAL_RE.search(message_text or "") and re.search(
+        r"\b(?:teacher|class|school|schedule|reminder|announcement)\b",
+        message_text or "", re.IGNORECASE))
 
 def _extract_json(text):
     """Claude sometimes wraps JSON in ```json fences. Grab { ... } safely."""
@@ -482,7 +887,7 @@ def _extract_json(text):
     return json.loads(text)
 
 
-def analyze_message(message_text: str, poster_roles=None) -> dict:
+def analyze_message(message_text: str, poster_roles=None, guild_id=None) -> dict:
     """Haiku: is this message worth remembering?
 
     poster_roles are the sender's own roles. In a student server nobody pings a grade
@@ -490,7 +895,7 @@ def analyze_message(message_text: str, poster_roles=None) -> dict:
     when someone describes their OWN class's deadline and one of their roles names a
     grade, we tag it with that grade. General news ("no school Monday") stays untagged.
     """
-    today = class_today().isoformat()
+    today = class_today(guild_id).isoformat()
     roles = ", ".join(poster_roles) if poster_roles else "(none)"
     prompt = f"""Today's date is {today}.
 
@@ -529,7 +934,7 @@ Respond with ONLY a JSON object in exactly this shape:
     try:
         return _extract_json(raw)
     except json.JSONDecodeError:
-        print(f"  (couldn't parse response: {raw!r})")
+        LOGGER.warning("Could not parse classifier response")
         return {"is_important": False}
 
 
@@ -827,7 +1232,7 @@ def _haiku_json(prompt, fallback):
         raw = next(block.text for block in response.content if block.type == "text")
         return _extract_json(raw)
     except (json.JSONDecodeError, anthropic.APIError) as err:
-        print(f"  (haiku call failed: {err})")
+        LOGGER.warning("Classifier helper failed: %s", type(err).__name__)
         return fallback
 
 
@@ -978,7 +1383,7 @@ def answer_question(question, deadlines, notes, materials, asker_roles=None) -> 
     what's actually for them."""
     memory = _format_memory(deadlines, notes, materials)
     roles = ", ".join(asker_roles) if asker_roles else "(no specific roles/grade)"
-    prompt = f"""You are Almanac, a helpful bot that remembers what happens in
+    prompt = f"""You are Memlo, a helpful bot that remembers what happens in
 a class group chat. Here is everything you currently remember:
 
 {memory}
@@ -1013,7 +1418,7 @@ def compose_reminder(deadline, notes) -> str:
     audience_line = (f'\nThis one is specifically for: {who}. Name them so the wrong '
                      f'grade/class doesn\'t worry — e.g. "Heads up 7th graders:".'
                      if who else "")
-    prompt = f"""You are Almanac in a class group chat. Write a SHORT, casual,
+    prompt = f"""You are Memlo in a class group chat. Write a SHORT, casual,
 friendly reminder (one or two sentences) that nobody asked for — a heads-up.
 
 Deadline: {deadline["summary"]} — due {deadline["due_date"]}.{audience_line}
@@ -1041,7 +1446,7 @@ def make_quiz(request_text, notes, materials) -> dict:
     material_text = "\n\n".join(
         f'From {m["filename"]}:\n{m["digest"]}' for m in materials
     ) or "  (none uploaded yet)"
-    prompt = f"""You are Almanac, the study bot for a class group chat. A student
+    prompt = f"""You are Memlo, the study bot for a class group chat. A student
 asked you to quiz the group. Their message: "{request_text}"
 
 Class notes:
@@ -1071,13 +1476,13 @@ Respond with ONLY a JSON object in exactly this shape:
     try:
         return _extract_json(raw)
     except json.JSONDecodeError:
-        print(f"  (couldn't parse quiz response: {raw!r})")
+        LOGGER.warning("Could not parse quiz response")
         return {}
 
 
 def grade_answers(quiz_text, reply_text, student) -> dict:
     """Sonnet: mark someone's reply to a quiz, however they chose to write it."""
-    prompt = f"""You are Almanac, the study bot for a class group chat. Here is
+    prompt = f"""You are Memlo, the study bot for a class group chat. Here is
 the quiz you posted, together with the private answer key the students cannot see:
 
 {quiz_text}
@@ -1123,28 +1528,56 @@ Respond with ONLY a JSON object in exactly this shape:
     try:
         return _extract_json(raw)
     except json.JSONDecodeError:
-        print(f"  (couldn't parse grading response: {raw!r})")
+        LOGGER.warning("Could not parse grading response")
         return {"is_answer_attempt": False}
 
 
 # --- The proactive reminder loop (the "it just knew" moment) --------
 
-@tasks.loop(time=REMIND_AT)
+@tasks.loop(minutes=5)
 async def reminder_loop():
-    for d in get_due_soon_unreminded():
-        channel = bot.get_channel(d["channel_id"])
-        if channel is None:
+    _health["last_reminder_tick"] = utc_now_iso()
+    for guild in bot.guilds:
+        settings = get_guild_settings(guild.id)
+        if not settings or settings["setup_status"] != "configured":
             continue
-        notes = get_notes(d["channel_id"])
-        text = await asyncio.to_thread(compose_reminder, d, notes)
-        await channel.send(text)
-        mark_reminded(d["id"])
-        print(f" REMINDED about: {d['summary']} (due {d['due_date']})")
+        local_now = class_now(guild.id)
+        if local_now.hour not in REMIND_HOURS or local_now.minute >= 15:
+            continue
+        slot = f"{local_now.date().isoformat()}:{local_now.hour}"
+        if _reminder_slots.get(guild.id) == slot:
+            continue
+        _reminder_slots[guild.id] = slot
+        for d in get_due_soon_unreminded(guild.id):
+            channel = bot.get_channel(d["channel_id"])
+            if channel is None:
+                continue
+            notes = get_notes(d["channel_id"])
+            text = await asyncio.to_thread(compose_reminder, d, notes)
+            await channel.send(text)
+            mark_reminded(d["id"])
+            record_event("first_reminder", guild.id, once=True)
+            LOGGER.info("Reminder sent: guild=%s deadline_id=%s", guild.id, d["id"])
 
 
 @reminder_loop.before_loop
 async def before_reminder_loop():
     await bot.wait_until_ready()   # don't start reminding until we're connected
+
+
+@tasks.loop(hours=6)
+async def backup_loop():
+    try:
+        target = await asyncio.to_thread(backup_database)
+        LOGGER.info("Database backup completed: %s", target)
+    except Exception as exc:
+        LOGGER.exception("Database backup failed")
+        record_operational_error("backup_loop", exc)
+
+
+@backup_loop.before_loop
+async def before_backup_loop():
+    await bot.wait_until_ready()
 
 
 # --- Answering a quiz privately (button -> popup -> only-you reply) --
@@ -1190,6 +1623,12 @@ class AnswerModal(discord.ui.Modal, title="Your answers"):
         # Grading is a Claude call and Discord kills an interaction after 3
         # seconds, so acknowledge first and send the real feedback afterwards.
         await interaction.response.defer(ephemeral=True, thinking=True)
+        guild_id = interaction.guild_id
+        if not rate_limiter.allow("grade", guild_id, interaction.user.id):
+            await interaction.followup.send(
+                "You’re moving faster than I can grade — try again in a minute.",
+                ephemeral=True)
+            return
         quiz_text = get_quiz(self.quiz_message_id)
         if not quiz_text:
             await interaction.followup.send(
@@ -1202,7 +1641,10 @@ class AnswerModal(discord.ui.Modal, title="Your answers"):
         await interaction.followup.send(
             result.get("feedback") or "I couldn't read those answers — try again?",
             ephemeral=True)
-        print(f" GRADED (privately): {interaction.user.display_name}")
+        if result.get("is_answer_attempt") and result.get("feedback"):
+            record_event("first_quiz_completed", guild_id, once=True)
+        LOGGER.info("Quiz graded privately: guild=%s user=%s",
+                    guild_id, interaction.user.id)
 
 
 class QuizView(discord.ui.View):
@@ -1227,7 +1669,8 @@ class QuizView(discord.ui.View):
 
 def _forget_summary(counts):
     """'2 deadlines, 1 note, 3 study files' — only the non-zero parts."""
-    labels = [("deadlines", "deadline"), ("notes", "note"), ("materials", "study file")]
+    labels = [("deadlines", "deadline"), ("notes", "note"),
+              ("materials", "study file"), ("quizzes", "quiz")]
     parts = [f'{counts[key]} {word}{"" if counts[key] == 1 else "s"}'
              for key, word in labels if counts.get(key)]
     return ", ".join(parts) if parts else "nothing"
@@ -1238,9 +1681,10 @@ class ForgetView(discord.ui.View):
     first, show what's about to go, and only delete on an explicit confirm — and only
     from the person who asked."""
 
-    def __init__(self, requester_id, author_name, channel_id):
+    def __init__(self, requester_id, guild_id, author_name=None, channel_id=None):
         super().__init__(timeout=120)   # transient; expires if left unanswered
         self.requester_id = requester_id
+        self.guild_id = guild_id
         self.author_name = author_name
         self.channel_id = channel_id
 
@@ -1256,14 +1700,23 @@ class ForgetView(discord.ui.View):
                        style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         counts = await asyncio.to_thread(
-            forget_user, self.author_name, self.channel_id)
+            forget_user_by_id, self.requester_id, self.guild_id)
+        # Also remove safe-to-identify legacy rows from this channel. Legacy rows
+        # have no Discord user ID; limiting this fallback to author_id IS NULL avoids
+        # deleting a current user's data merely because display names match.
+        if self.author_name and self.channel_id:
+            legacy = await asyncio.to_thread(
+                forget_user, self.author_name, self.channel_id)
+            for key, value in legacy.items():
+                counts[key] = counts.get(key, 0) + value
         for child in self.children:
             child.disabled = True
         await interaction.response.edit_message(
-            content=f"🧹 Done — I've forgotten {_forget_summary(counts)} you shared "
-                    "in this channel. That can't be undone.",
+            content=f"🧹 Done — I've deleted {_forget_summary(counts)} linked to you "
+                    "in this server. That can't be undone.",
             view=self)
-        print(f" FORGOT: {self.author_name} in channel {self.channel_id} -> {counts}")
+        LOGGER.info("User data deleted: guild=%s user=%s counts=%s",
+                    self.guild_id, self.requester_id, counts)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1279,19 +1732,335 @@ FORGET_PHRASES = ("forget me", "forget my data", "delete my data",
                   "forget everything about me", "erase my data")
 
 
+# --- Slash-command onboarding and privacy controls -----------------
+
+def _is_admin(interaction):
+    member = interaction.user
+    return bool(interaction.guild and isinstance(member, discord.Member)
+                and member.guild_permissions.manage_guild)
+
+
+async def _require_admin(interaction):
+    if _is_admin(interaction):
+        return True
+    await interaction.response.send_message(
+        "You need **Manage Server** permission to do that.", ephemeral=True)
+    return False
+
+
+@tree.command(name="setup", description="Choose a class scope and timezone for Memlo")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    timezone_name="IANA timezone, such as America/Chicago or Europe/London",
+    category="Track every text channel in this class category",
+    channel="Or track one class text channel",
+)
+async def setup_command(interaction: discord.Interaction,
+                        timezone_name: str = DEFAULT_TIMEZONE,
+                        category: discord.CategoryChannel = None,
+                        channel: discord.TextChannel = None):
+    if not await _require_admin(interaction):
+        return
+    if (category is None) == (channel is None):
+        await interaction.response.send_message(
+            "Choose exactly one **category** or one **channel**. You can add more "
+            "later with `/track-category` or `/track-channel`.", ephemeral=True)
+        return
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        await interaction.response.send_message(
+            "I don’t recognize that timezone. Use an IANA name like "
+            "`America/Chicago`, `America/New_York`, or `Europe/London`.",
+            ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    configure_guild(interaction.guild_id, timezone_name, interaction.user.id)
+    if category is not None:
+        activate_category(category.id, interaction.guild_id, category.name,
+                          interaction.user.display_name, interaction.user.id)
+        scope = f"the **{category.name}** category"
+        scope_type = "category"
+    else:
+        activate_channel(channel.id, interaction.guild_id, channel.name,
+                         interaction.user.id)
+        scope = channel.mention
+        scope_type = "channel"
+    record_event("setup_complete", interaction.guild_id,
+                 {"scope_type": scope_type, "timezone": timezone_name}, once=True)
+    await interaction.followup.send(
+        f"✅ Memlo is ready. I’ll only read {scope}, using `{timezone_name}` "
+        "for dates and reminders. Everything else stays ignored.", ephemeral=True)
+
+
+@tree.command(name="track-category", description="Add a class category to Memlo")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+async def track_category_command(interaction: discord.Interaction,
+                                 category: discord.CategoryChannel):
+    if not await _require_admin(interaction):
+        return
+    settings = get_guild_settings(interaction.guild_id)
+    if not settings or settings["setup_status"] != "configured":
+        await interaction.response.send_message(
+            "Run `/setup` first so I know this server’s timezone.", ephemeral=True)
+        return
+    activate_category(category.id, interaction.guild_id, category.name,
+                      interaction.user.display_name, interaction.user.id)
+    await interaction.response.send_message(
+        f"✅ Now tracking the **{category.name}** category.", ephemeral=True)
+
+
+@tree.command(name="track-channel", description="Add one class channel to Memlo")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+async def track_channel_command(interaction: discord.Interaction,
+                                channel: discord.TextChannel):
+    if not await _require_admin(interaction):
+        return
+    settings = get_guild_settings(interaction.guild_id)
+    if not settings or settings["setup_status"] != "configured":
+        await interaction.response.send_message(
+            "Run `/setup` first so I know this server’s timezone.", ephemeral=True)
+        return
+    activate_channel(channel.id, interaction.guild_id, channel.name,
+                     interaction.user.id)
+    await interaction.response.send_message(
+        f"✅ Now tracking {channel.mention}.", ephemeral=True)
+
+
+@tree.command(name="untrack-category", description="Stop Memlo reading a category")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+async def untrack_category_command(interaction: discord.Interaction,
+                                   category: discord.CategoryChannel):
+    if not await _require_admin(interaction):
+        return
+    deactivate_category(category.id)
+    await interaction.response.send_message(
+        f"🛑 Stopped tracking the **{category.name}** category.", ephemeral=True)
+
+
+@tree.command(name="untrack-channel", description="Stop Memlo reading a channel")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+async def untrack_channel_command(interaction: discord.Interaction,
+                                  channel: discord.TextChannel):
+    if not await _require_admin(interaction):
+        return
+    deactivate_channel(channel.id)
+    await interaction.response.send_message(
+        f"🛑 Stopped tracking {channel.mention}.", ephemeral=True)
+
+
+@tree.command(name="setup-status", description="Show Memlo’s configured scopes")
+@app_commands.guild_only()
+async def setup_status_command(interaction: discord.Interaction):
+    settings = get_guild_settings(interaction.guild_id)
+    if not settings or settings["setup_status"] != "configured":
+        await interaction.response.send_message(
+            "Memlo is not set up yet, so I’m reading **nothing**. An admin can "
+            "run `/setup` to choose a class channel or category.", ephemeral=True)
+        return
+    categories = get_active_category_rows(interaction.guild_id)
+    conn = db()
+    channels = conn.execute(
+        "SELECT name FROM tracked_channels WHERE guild_id = ? ORDER BY name",
+        (interaction.guild_id,)).fetchall()
+    conn.close()
+    scopes = [f"category: **{row['name']}**" for row in categories]
+    scopes += [f"channel: **#{row['name']}**" for row in channels]
+    await interaction.response.send_message(
+        f"Timezone: `{settings['timezone']}`\nTracked scopes:\n" +
+        ("\n".join(f"• {scope}" for scope in scopes) if scopes else "• none"),
+        ephemeral=True)
+
+
+@tree.command(name="delete-my-data", description="Delete your Memlo data in this server")
+@app_commands.guild_only()
+async def delete_my_data_command(interaction: discord.Interaction):
+    counts = await asyncio.to_thread(
+        count_user_data_by_id, interaction.user.id, interaction.guild_id)
+    legacy = await asyncio.to_thread(
+        count_user_data, interaction.user.display_name, interaction.channel_id)
+    for key, value in legacy.items():
+        counts[key] = counts.get(key, 0) + value
+    if sum(counts.values()) == 0:
+        await interaction.response.send_message(
+            "I don’t have anything stored that’s linked to you in this server.",
+            ephemeral=True)
+        return
+    await interaction.response.send_message(
+        f"I found {_forget_summary(counts)} linked to you. Delete it permanently?",
+        view=ForgetView(interaction.user.id, interaction.guild_id,
+                        interaction.user.display_name, interaction.channel_id),
+        ephemeral=True)
+
+
+class DeleteServerView(discord.ui.View):
+    def __init__(self, requester_id, guild_id):
+        super().__init__(timeout=120)
+        self.requester_id = requester_id
+        self.guild_id = guild_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.requester_id or not _is_admin(interaction):
+            await interaction.response.send_message(
+                "Only the admin who requested this deletion can confirm it.",
+                ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Delete this server’s Memlo data", emoji="🗑️",
+                       style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        counts = await asyncio.to_thread(delete_server_data, self.guild_id)
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content="🗑️ All Memlo memory and configuration for this server has "
+                    "been deleted. I’m now tracking nothing; run `/setup` to start over.",
+            view=self)
+        LOGGER.warning("Server data deleted: guild=%s counts=%s", self.guild_id, counts)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content="Canceled. Nothing was deleted.", view=self)
+
+
+@tree.command(name="delete-server-data",
+              description="Permanently delete all Memlo data for this server")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+async def delete_server_data_command(interaction: discord.Interaction):
+    if not await _require_admin(interaction):
+        return
+    await interaction.response.send_message(
+        "This permanently deletes every saved deadline, note, study digest, quiz, "
+        "setting, and telemetry event for this server. Continue?",
+        view=DeleteServerView(interaction.user.id, interaction.guild_id),
+        ephemeral=True)
+
+
+@tree.command(name="invite", description="Get the link to add Memlo to another server")
+async def invite_command(interaction: discord.Interaction):
+    install_url = os.environ.get(
+        "DISCORD_INSTALL_URL",
+        f"https://discord.com/oauth2/authorize?client_id={bot.user.id}")
+    record_event("referral_link_shown", interaction.guild_id,
+                 {"source": "invite_command"})
+    await interaction.response.send_message(
+        f"Add Memlo to another class server: {install_url}", ephemeral=True)
+
+
+@tree.command(name="privacy", description="See how Memlo handles and deletes data")
+async def privacy_command(interaction: discord.Interaction):
+    privacy_url = os.environ.get(
+        "PRIVACY_URL",
+        "https://getmemlo.com/privacy",
+    )
+    terms_url = os.environ.get(
+        "TERMS_URL",
+        "https://getmemlo.com/terms",
+    )
+    links = []
+    if privacy_url:
+        links.append(f"Privacy: {privacy_url}")
+    if terms_url:
+        links.append(f"Terms: {terms_url}")
+    text = ("Memlo only reads admin-selected class channels. It stores structured "
+            "class memory and never sells data or sends message text to analytics. "
+            "Use `/delete-my-data` any time.")
+    if links:
+        text += "\n" + "\n".join(links)
+    await interaction.response.send_message(text, ephemeral=True)
+
+
+@tree.command(name="support", description="Get help or report a privacy issue")
+async def support_command(interaction: discord.Interaction):
+    support_url = os.environ.get(
+        "SUPPORT_SERVER_URL", "https://discord.gg/7UT2aPf5Us"
+    )
+    if not support_url:
+        await interaction.response.send_message(
+            "Memlo support is not configured yet. Email ehsieh175@gmail.com for help, "
+            "privacy requests, or security reports.",
+            ephemeral=True)
+        return
+    await interaction.response.send_message(
+        f"Join the Memlo support server: {support_url}\n"
+        "For private data or security requests, email ehsieh175@gmail.com.",
+        ephemeral=True)
+
+
 # --- Discord event handlers ----------------------------------------
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}. Listening for messages...")
+    global _view_registered, _commands_synced
+    _health["last_ready"] = utc_now_iso()
+    LOGGER.info("Logged in as %s; connected to %s guilds", bot.user, len(bot.guilds))
+    for guild in bot.guilds:
+        ensure_guild_settings(guild.id)
+        record_event("install", guild.id, {"source": "existing_or_startup"}, once=True)
     if not reminder_loop.is_running():
         reminder_loop.start()
+    if not backup_loop.is_running():
+        backup_loop.start()
+    await start_health_server()
+    if not _commands_synced:
+        try:
+            await tree.sync()
+            _commands_synced = True
+            LOGGER.info("Slash commands synced")
+        except Exception as exc:
+            LOGGER.exception("Slash-command sync failed")
+            record_operational_error("command_sync", exc)
     # Re-attach the quiz button handler, so buttons on quizzes posted before the
     # last restart still work. on_ready fires again on every reconnect, hence the flag.
-    global _view_registered
     if not _view_registered:
         bot.add_view(QuizView())
         _view_registered = True
+
+
+@bot.event
+async def on_guild_join(guild):
+    ensure_guild_settings(guild.id)
+    record_event("install", guild.id, {"source": "guild_join"}, once=True)
+    LOGGER.info("Installed in guild=%s", guild.id)
+
+
+@bot.event
+async def on_guild_remove(guild):
+    counts = await asyncio.to_thread(delete_server_data, guild.id, False)
+    record_event("removal", None, {"count": 1})
+    LOGGER.info("Removed from guild=%s; data deleted=%s", guild.id, counts)
+
+
+@bot.event
+async def on_error(event_method, *args, **kwargs):
+    exc = sys.exc_info()[1] or RuntimeError(f"Unhandled {event_method} error")
+    LOGGER.exception("Unhandled Discord event error: %s", event_method)
+    record_operational_error(f"discord_event:{event_method}", exc)
+
+
+@tree.error
+async def on_app_command_error(interaction, error):
+    guild_id = interaction.guild_id
+    LOGGER.error("Slash command failed: command=%s guild=%s type=%s",
+                 getattr(interaction.command, "name", "unknown"), guild_id,
+                 type(error).__name__)
+    record_operational_error(
+        f"slash:{getattr(interaction.command, 'name', 'unknown')}", error, guild_id)
+    message = "Something went wrong. I logged a content-free error marker so it can be fixed."
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+    else:
+        await interaction.response.send_message(message, ephemeral=True)
 
 
 class CombineView(discord.ui.View):
@@ -1316,7 +2085,7 @@ class CombineView(discord.ui.View):
         await interaction.response.edit_message(
             content=f"🔗 Got it — I'll quiz from this **and** {self.existing_label} together.",
             view=self)
-        print(f" COMBINED material: {self.new_group} -> {self.existing_group}")
+        LOGGER.info("Material groups combined")
 
     @discord.ui.button(label="Keep separate", emoji="✂️",
                        style=discord.ButtonStyle.secondary)
@@ -1365,9 +2134,11 @@ async def read_attachments(message: discord.Message):
             ingest_attachment, name, media_type, data, is_text)
         await asyncio.to_thread(
             save_material, name, result["digest"], message.author.display_name,
-            message.channel.id, message.jump_url, result["topic"], quiz_group)
+            message.channel.id, message.jump_url, result["topic"], quiz_group,
+            message.guild.id, message.author.id)
         ingested.append({"filename": name, "topic": result["topic"]})
-        print(f" INGESTED FILE: {name} [{result['topic']}]")
+        LOGGER.info("File ingested: guild=%s channel=%s",
+                    message.guild.id, message.channel.id)
 
     if not ingested:
         return
@@ -1379,7 +2150,7 @@ async def read_attachments(message: discord.Message):
     together = " (I'll treat them as one set)" if len(ingested) > 1 else ""
     await message.channel.send(
         f"📥 Got {files} — {', '.join(topics)}. I've studied {'them' if len(ingested) > 1 else 'it'}"
-        f"{together}. Try: `@Almanac quiz us on it`")
+        f"{together}. Try: `@Memlo quiz us on it`")
 
     relation = await asyncio.to_thread(
         relate_upload, message.clean_content.strip(), topics[0], prior_groups)
@@ -1391,7 +2162,7 @@ async def read_attachments(message: discord.Message):
     if relation["combine"] == "yes":
         await asyncio.to_thread(merge_quiz_groups, quiz_group, relation["group"])
         await message.channel.send(f"🔗 Added to {label} — I'll quiz from both.")
-        print(f" COMBINED material (caption): {quiz_group} -> {relation['group']}")
+        LOGGER.info("Material groups combined from caption: guild=%s", message.guild.id)
     else:
         await message.channel.send(
             f"I already have {label}. Want quizzes to draw on both, or keep them separate?",
@@ -1418,12 +2189,13 @@ async def read_links(message: discord.Message, urls):
                     "(I tried to open that Google link but it's not link-shared — set it "
                     "to *Anyone with the link* and repost, or paste the text.)")
             else:
-                print(f"  (couldn't read link {url}: {fetched['error']})")
+                LOGGER.warning("Could not read a shared link: error=%s", fetched["error"])
             continue
 
         if not await asyncio.to_thread(
                 looks_like_study_material, caption, url, fetched["snippet"]):
-            print(f"(skipped link — not study material) {url}")
+            LOGGER.info("Shared link skipped as non-study material: guild=%s",
+                        message.guild.id)
             continue
 
         result = await asyncio.to_thread(
@@ -1434,11 +2206,12 @@ async def read_links(message: discord.Message, urls):
         await asyncio.to_thread(
             save_material, fetched["label"], result["digest"],
             message.author.display_name, message.channel.id, url,
-            result["topic"], quiz_group)
-        print(f" INGESTED LINK: {url} [{result['topic']}]")
+            result["topic"], quiz_group, message.guild.id, message.author.id)
+        LOGGER.info("Link ingested: guild=%s channel=%s",
+                    message.guild.id, message.channel.id)
         await message.channel.send(
             f"🔗 Read **{fetched['label']}** — {result['topic']}. I've studied it. "
-            "Try: `@Almanac quiz us on it`")
+            "Try: `@Memlo quiz us on it`")
 
 
 def _real_roles(member):
@@ -1473,7 +2246,7 @@ def _is_for_bot(message: discord.Message) -> bool:
     """Is this message aimed at us? Counts a direct @mention of the bot AND a
     mention of the bot's own auto-created role. Discord makes a managed role with
     the bot's name when it joins, and people pick that role from the @-autocomplete
-    just as often as the bot user itself — without this, "@Almanac what's due?"
+    just as often as the bot user itself — without this, "@Memlo what's due?"
     falls through and gets filed away as chatter."""
     if bot.user in message.mentions:
         return True
@@ -1510,17 +2283,17 @@ async def handle_admin_command(message: discord.Message) -> bool:
         return False
 
     if is_status:
+        settings = await asyncio.to_thread(get_guild_settings, message.guild.id)
         rows = await asyncio.to_thread(get_active_category_rows, message.guild.id)
-        if not rows:
+        if not settings or settings["setup_status"] != "configured":
             await message.reply(
-                "I'm not narrowed to any categories here, so I'm listening in **every** "
-                "channel. Run `@Almanac activate` inside a class category (like a "
-                "grade) to limit me to just your class channels.")
+                "I’m not set up here, so I’m reading **nothing**. A server admin can "
+                "run `/setup` to choose a class category or channel.")
         else:
             names = "\n".join(f"  • {r['name']}" for r in rows)
             await message.reply(
-                "📋 I'm only tracking these categories (everything else is ignored):\n"
-                f"{names}")
+                "📋 Use `/setup-status` for the complete scope. Tracked categories:\n"
+                f"{names or '  • none'}")
         return True
 
     category = _category_of(message.channel)
@@ -1531,22 +2304,30 @@ async def handle_admin_command(message: discord.Message) -> bool:
         return True
 
     if is_activate:
+        settings = await asyncio.to_thread(get_guild_settings, message.guild.id)
+        if not settings or settings["setup_status"] != "configured":
+            await message.reply(
+                "Setup now requires an explicit timezone and scope. Please run `/setup`; "
+                "until then I’m reading nothing.")
+            return True
         await asyncio.to_thread(
             activate_category, category.id, message.guild.id, category.name,
-            message.author.display_name)
+            message.author.display_name, message.author.id)
         channels = ", ".join(f"#{c.name}" for c in category.text_channels) or "(none yet)"
         await message.reply(
             f"✅ Now tracking the **{category.name}** category: {channels}. "
             "Each channel keeps its own separate memory — a deadline in one class "
             "never shows up in another.")
-        print(f" ACTIVATED category {category.name} ({category.id})")
+        LOGGER.info("Category activated: guild=%s category=%s",
+                    message.guild.id, category.id)
     else:  # deactivate
         await asyncio.to_thread(deactivate_category, category.id)
         await message.reply(
             f"🛑 Stopped tracking the **{category.name}** category — I'll ignore its "
             "channels now. (What I already remembered is still there; say "
-            "`@Almanac forget me` in a channel to clear your own.)")
-        print(f" DEACTIVATED category {category.name} ({category.id})")
+            "`@Memlo forget me` in a channel to clear your own.)")
+        LOGGER.info("Category deactivated: guild=%s category=%s",
+                    message.guild.id, category.id)
     return True
 
 
@@ -1567,14 +2348,28 @@ async def on_message(message: discord.Message):
     tracked = await asyncio.to_thread(
         is_tracked,
         message.guild.id if message.guild else None,
-        category.id if category else None)
+        category.id if category else None,
+        message.channel.id)
     if not tracked:
         # If they actually @mentioned us in a non-class channel, don't just vanish —
         # point them at their class channel once. Otherwise stay silent.
         if _is_for_bot(message) and message.clean_content.strip():
-            await message.reply(
-                "I only keep track of class channels — ask me in your class's "
-                "channel and I'll have everything for it. 📚")
+            settings = get_guild_settings(message.guild.id) if message.guild else None
+            if not settings or settings["setup_status"] != "configured":
+                await message.reply(
+                    "I’m not set up yet, so I’m reading nothing. A server admin can "
+                    "run `/setup` to choose a class channel. 🔒")
+            else:
+                await message.reply(
+                    "I only keep track of admin-selected class channels — ask me in "
+                    "one of those channels. 📚")
+        return
+
+    urls = extract_urls(message.content)
+    if (message.attachments or urls) and not rate_limiter.allow(
+            "ingest", message.guild.id, message.author.id):
+        await message.reply(
+            "That’s a lot of study material at once — wait a few minutes, then try again.")
         return
 
     # Files first, always. Someone can drop a study guide while replying to the
@@ -1586,7 +2381,6 @@ async def on_message(message: discord.Message):
     # Links are the other way study material arrives. Fetch anything linked and file
     # the keepers — before the branches below, for the same reason files are read
     # first: a doc can be shared in the same breath as a question to the bot.
-    urls = extract_urls(message.content)
     if urls:
         await read_links(message, urls)
 
@@ -1600,13 +2394,20 @@ async def on_message(message: discord.Message):
     if text and message.reference and message.reference.message_id:
         quiz_text = get_quiz(message.reference.message_id)
         if quiz_text:
+            if not rate_limiter.allow(
+                    "grade", message.guild.id, message.author.id):
+                await message.reply(
+                    "You’re moving faster than I can grade — try again in a minute.")
+                return
             result = await asyncio.to_thread(
                 grade_answers, quiz_text, text, message.author.display_name)
             # They might be replying to the quiz without answering it ("lol",
             # "quiz us again") — in that case fall through and handle it normally.
             if result.get("is_answer_attempt") and result.get("feedback"):
                 await message.reply(result["feedback"])
-                print(f" GRADED: {message.author.display_name}: {text}")
+                record_event("first_quiz_completed", message.guild.id, once=True)
+                LOGGER.info("Quiz graded: guild=%s user=%s",
+                            message.guild.id, message.author.id)
                 return
 
     # Mentioning OR replying to the bot means "this is for you" — don't store it.
@@ -1618,20 +2419,28 @@ async def on_message(message: discord.Message):
         # else so the phrase can't be swallowed by the quiz or answer branches.
         if any(phrase in lower for phrase in FORGET_PHRASES):
             counts = await asyncio.to_thread(
+                count_user_data_by_id, message.author.id, message.guild.id)
+            legacy = await asyncio.to_thread(
                 count_user_data, message.author.display_name, message.channel.id)
+            for key, value in legacy.items():
+                counts[key] = counts.get(key, 0) + value
             if sum(counts.values()) == 0:
                 await message.reply(
-                    "I don't have anything stored from you in this channel — "
+                    "I don't have anything stored from you in this server — "
                     "nothing to forget. 👍")
                 return
             await message.reply(
-                f"You've got {_forget_summary(counts)} stored in this channel. "
+                f"You've got {_forget_summary(counts)} stored in this server. "
                 "Delete all of it? This can't be undone.",
-                view=ForgetView(message.author.id, message.author.display_name,
-                                message.channel.id))
+                view=ForgetView(message.author.id, message.guild.id,
+                                message.author.display_name, message.channel.id))
             return
         # "quiz" -> teach mode; anything else -> answer from memory.
         if "quiz" in text.lower():
+            if not rate_limiter.allow("quiz", message.guild.id, message.author.id):
+                await message.reply(
+                    "You’ve made a few quizzes already — give me five minutes, then try again.")
+                return
             notes = get_notes(message.channel.id)
             # Quiz only from the material they actually meant. Two people asking
             # about two subjects at once each get their own; the answer key is
@@ -1658,30 +2467,40 @@ async def on_message(message: discord.Message):
             save_quiz(sent.id, message.channel.id,
                       f'QUESTIONS (posted to the chat):\n{quiz["quiz"]}\n\n'
                       f'ANSWER KEY (private, students never saw this):\n'
-                      f'{quiz.get("answer_key", "")}')
+                      f'{quiz.get("answer_key", "")}',
+                      message.guild.id, message.author.id)
         else:
             # "ok", "thanks", a lone emoji — replying to us isn't the same as asking
             # us something, and Discord makes every reply look like a mention.
             if not await asyncio.to_thread(wants_a_reply, text):
-                print(f"(no reply needed) {message.author.display_name}: {text}")
+                LOGGER.info("No reply needed: guild=%s user=%s",
+                            message.guild.id, message.author.id)
                 return
-            deadlines = get_upcoming_deadlines(message.channel.id)
+            if not rate_limiter.allow("answer", message.guild.id, message.author.id):
+                await message.reply(
+                    "I’ve answered a bunch just now — give me a minute, then ask again.")
+                return
+            deadlines = get_upcoming_deadlines(message.channel.id, message.guild.id)
             notes = get_notes(message.channel.id)
             materials = get_materials(message.channel.id)
             answer = await asyncio.to_thread(
                 answer_question, text, deadlines, notes, materials,
                 _real_roles(message.author))
             await message.reply(answer)
+            record_event("first_answer", message.guild.id, once=True)
         return
 
     if not text:
         return
 
     poster_roles = _real_roles(message.author)
-    result = await asyncio.to_thread(analyze_message, message.content, poster_roles)
+    if not should_analyze_message(message.content, poster_roles):
+        return
+    result = await asyncio.to_thread(
+        analyze_message, message.content, poster_roles, message.guild.id)
 
     if not result.get("is_important"):
-        print(f"(skipped) {message.author.display_name}: {message.content}")
+        LOGGER.info("Classifier skipped message: guild=%s", message.guild.id)
         return
 
     author = message.author.display_name
@@ -1693,14 +2512,17 @@ async def on_message(message: discord.Message):
 
     if result.get("type") == "deadline" and result.get("due_date"):
         save_deadline(result["summary"], result["due_date"], author,
-                      message.channel.id, link, audience)
-        print(f" SAVED DEADLINE: {result['summary']} (due {result['due_date']})"
-              f"{f' [for {audience}]' if audience else ''}")
+                      message.channel.id, link, audience,
+                      message.guild.id, message.author.id)
+        record_event("first_deadline_saved", message.guild.id, once=True)
+        LOGGER.info("Deadline saved: guild=%s channel=%s due=%s",
+                    message.guild.id, message.channel.id, result["due_date"])
     else:
         save_note(result.get("summary", ""), message.content, author,
-                  message.channel.id, link, audience)
-        print(f" SAVED NOTE: {result.get('summary', '')}"
-              f"{f' [for {audience}]' if audience else ''}")
+                  message.channel.id, link, audience,
+                  message.guild.id, message.author.id)
+        LOGGER.info("Note saved: guild=%s channel=%s",
+                    message.guild.id, message.channel.id)
 
 
 # --- Go -------------------------------------------------------------
@@ -1709,5 +2531,6 @@ if __name__ == "__main__":
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         raise SystemExit("Set your DISCORD_TOKEN environment variable first.")
+    setup_logging()
     init_db()
     bot.run(token)
