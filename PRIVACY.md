@@ -1,143 +1,140 @@
-# Almanac — Privacy Policy
+# Memlo Privacy Policy
 
-**Last updated: July 22, 2026**
+Published at: https://getmemlo.com/privacy
 
-Almanac ("the bot", "we", "us") is a Discord bot that acts as a shared memory for
-a class group chat: it notices deadlines and announcements, answers questions about
-them, and makes study quizzes from material people share. This policy explains what
-data it handles and why.
+**Last updated: August 9, 2026**
 
-> **Plain-language summary:** Almanac reads the messages in the channels it's
-> added to so it can remember deadlines and answer questions. To do that, message
-> text and any study files you upload are sent to Anthropic (the company behind
-> Claude) for processing, and a summary is stored in a small database on the
-> operator's computer. It does not sell your data, show ads, or share it with anyone
-> beyond what's described here. You can ask to have your data deleted at any time.
+Memlo is a Discord bot that acts as shared memory for class channels. It can
+remember deadlines and announcements, answer questions from that memory, remind a
+class before work is due, and make quizzes from study material.
 
----
+Contact: **ehsieh175@gmail.com**
 
-## Who runs this bot
+## The short version
 
-Almanac is operated by **Emma Hsieh** ("the operator"). It is a small, personal
-project, not a company.
+- Memlo reads only the class channels or categories a server administrator
+  explicitly selects during setup. A new installation reads nothing until setup is
+  complete.
+- Relevant message text and study files are sent to Anthropic's Claude API so
+  Memlo can understand them. Structured memories and study digests are stored in
+  Memlo's hosted database.
+- Product analytics contain event names and operational counts only. Message text,
+  filenames, study content, and questions are never sent to analytics.
+- Memlo does not sell personal data, show targeted ads, or train its own models on
+  class content.
+- A user can run `/delete-my-data`; a server administrator can run
+  `/delete-server-data`.
 
-**Contact for any privacy question or data-deletion request:** message the operator
-on Discord at **[YOUR DISCORD USERNAME]**, or ask in your class server.
-*(You can also add an email here if you prefer.)*
+## What Memlo processes
 
----
+### Selected Discord channels
 
-## What information Almanac handles
+Memlo receives messages, attachments, links, author information, roles, channel
+identifiers, and message identifiers from channels selected by a server administrator.
+It ignores every unselected channel. Discord requires the Message Content permission
+for this functionality.
 
-Almanac only processes activity in the Discord servers and channels it has been
-explicitly added to. It does not read direct messages or other servers.
+### Information stored as class memory
 
-**Message content.** To decide whether a message is worth remembering (a deadline,
-an announcement, an instruction like "notes are allowed"), the bot reads the text of
-messages posted in channels where it is present. This is done using Discord's
-"Message Content" permission.
+When content is relevant to the product, Memlo may store:
 
-**Information it stores.** When a message is judged important, or when you interact
-with the bot, it saves the following to a local database:
+- a short deadline, announcement, or instruction summary;
+- the original text behind a saved announcement or note;
+- a due date and the time the item was learned;
+- the contributor's Discord user ID and current display name;
+- Discord server and channel IDs and a link to the source message;
+- a digest of a shared image, PDF, text file, Google document, or supported webpage;
+- generated quizzes, answer keys, and grading feedback; and
+- the class or role an item applies to, when available.
 
-- A short **summary** of the deadline, announcement, or note.
-- For saved notes, the **original text** of the message that triggered it.
-- The **display name** of the person who posted it.
-- The **channel ID** and a **link** back to the original message.
-- **Due dates** it detected, and the time it learned about them.
-- **Study materials** you upload (images, PDFs, or text files): the bot reads the
-  file, writes a study digest, and stores that digest along with the file name.
-- **Quizzes** it generates, including the answer keys, and the feedback it gives on
-  answers you submit.
+Uploaded files are processed to produce a study digest. Memlo stores the digest and
+source reference, not a second permanent copy of the original file.
 
-**What it does *not* collect.** Almanac does not collect your email address, phone
-number, payment information, IP address, Discord password, or any messages from
-channels it hasn't been added to. It does not track you across servers.
+### Privacy-preserving product analytics
 
----
+Memlo records a limited set of events needed to understand whether the product
+works: installation, completed setup, first remembered deadline, first answer, first
+reminder, first completed quiz, referral-link display, and removal. These events may
+include the Discord server ID, timezone, scope type, source, or a numeric count.
 
-## How your information is used
+Analytics do **not** include message text, attachments, filenames, study digests,
+questions, answers, display names, or Discord user IDs.
 
-Your information is used **only** to make the bot work:
+### Operational information
 
-- Detecting and remembering deadlines, announcements, and instructions.
-- Answering questions you ask it (e.g. "what's due this week?").
-- Sending unprompted reminders when something is due soon.
-- Creating quizzes from shared study material and grading replies.
+Memlo records timestamps and content-free error markers such as the failed component
+and exception type. Application logs use Discord IDs and internal record IDs where
+needed for diagnosis, not message content.
 
-Almanac does **not** use your data for advertising, profiling, or training its own
-models, and it is **not sold or rented** to anyone.
+## How the information is used
 
----
+Information is used only to:
 
-## Third parties who process your data
+- detect and remember class deadlines, announcements, and instructions;
+- answer questions from a selected channel's memory;
+- deliver reminders;
+- process study material, create quizzes, and grade submitted answers;
+- enforce rate limits and prevent abuse;
+- keep the service reliable and backed up; and
+- measure activation, retention, and reliability using content-free events.
 
-Making the bot work involves two services:
+Memlo does not sell or rent data, use it for targeted advertising, build advertising
+profiles, or train its own machine-learning models on it.
 
-**Discord.** The platform the bot runs on. Your use of Discord is governed by
-[Discord's Privacy Policy](https://discord.com/privacy).
+## Service providers
 
-**Anthropic (Claude).** To understand messages, read uploaded study files, and write
-quizzes and answers, Almanac sends the relevant **message text and the contents of
-files you upload** to Anthropic's Claude API for processing. Anthropic's handling of
-that data is governed by their
+**Discord** delivers messages and interactions to the bot. Discord's processing is
+governed by the [Discord Privacy Policy](https://discord.com/privacy).
+
+**Anthropic** processes relevant message text and study material through the Claude
+API. Anthropic's processing is governed by its
 [Privacy Policy](https://www.anthropic.com/legal/privacy) and
-[Commercial Terms](https://www.anthropic.com/legal/commercial-terms); by default,
-data sent to the Claude API is not used to train their models. No other third parties
-receive your data.
+[Commercial Terms](https://www.anthropic.com/legal/commercial-terms).
 
----
+**Hosting provider.** Memlo runs on a hosted Linux server. Its SQLite database,
+encrypted provider storage where offered, operational logs, and rotating database
+backups live on that infrastructure. The exact provider may change without changing
+the uses described in this policy.
 
-## Where your data is stored, and for how long
+No other provider receives class content unless this policy is updated first.
 
-Stored data lives in a single database file on the **operator's own computer**, not on
-a public cloud server.
+## Retention and deletion
 
-**Retention.** Almanac currently keeps saved deadlines, notes, materials, and
-quizzes **until the operator deletes them**. There is no automatic expiry. If you want
-something removed, use the contact above and the operator will delete it.
+Class memory remains until it is deleted, the bot is removed from the server, or the
+operator removes it as part of maintenance. The service creates a database backup
+every six hours and retains the latest 14 backup snapshots. Deleted records may remain
+in those rotating backups until the relevant snapshots expire.
 
----
+- Run **`/delete-my-data`** to permanently delete records attributed to your Discord
+  user ID within that server after confirmation.
+- A server administrator can run **`/delete-server-data`** to delete all class memory,
+  settings, and server-linked telemetry after confirmation.
+- Removing Memlo from a server stops collection and automatically deletes that
+  server's stored content and configuration. A content-free aggregate removal event
+  may remain.
+- You may also contact **ehsieh175@gmail.com** with an access or deletion request.
 
-## Your choices and rights
+## Choices and controls
 
-- **See what's stored about you:** ask the operator (contact above).
-- **Delete your data yourself, any time:** message the bot **`@Almanac forget me`**
-  in a channel and it will delete everything you've contributed to that channel, after
-  a confirmation step. You can also ask the operator to remove specific items or the
-  entire database. Removing the bot from a server also stops any further collection
-  from it.
-- **Stop collection:** an admin can remove Almanac from the server at any time, or
-  restrict which channels it can see using Discord's channel permissions.
-
----
+Server administrators choose the channels or categories Memlo can read and can
+remove a scope at any time. `/setup-status` shows the configured timezone and tracked
+scopes. Removing the bot stops all future processing.
 
 ## Students and younger users
 
-Almanac is built for use in class group chats. Discord's own Terms of Service
-require users to be at least **13 years old** (or older where local law sets a higher
-age). Almanac is intended only for users who meet Discord's minimum age. If you
-believe someone under that age has had their information stored by the bot, contact
-the operator and it will be deleted. This bot is not directed at children under 13 and
-does not knowingly collect their information.
-
----
+Memlo is intended only for people who meet Discord's minimum age requirement,
+generally 13 or older and higher where local law requires it. It is not directed to
+children under 13. If you believe information from an underage user was processed,
+contact **ehsieh175@gmail.com** so it can be deleted.
 
 ## Security
 
-The database is kept on the operator's personal device and is not exposed publicly.
-That said, this is a small personal project, not an enterprise service — please don't
-share anything through Almanac that you would consider highly sensitive.
+Memlo uses explicit channel opt-in, least-privilege Discord permissions, rate limits,
+host filtering for fetched links, size limits, automated backups, health monitoring,
+and restricted server access. No internet service can guarantee perfect security, so
+users should not share highly sensitive personal information through Memlo.
 
----
+## Changes
 
-## Changes to this policy
-
-If this policy changes, the "Last updated" date above will change. Significant changes
-will be announced in the channels where the bot is active.
-
----
-
-## Contact
-
-Questions, concerns, or deletion requests: **[YOUR CONTACT EMAIL]**
+Material changes will update the date at the top of this policy and will be announced
+through Memlo's support channel or server where practical.
