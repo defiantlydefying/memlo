@@ -1,0 +1,23 @@
+[Unit]
+Description=Memlo Discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=memlo
+Group=memlo
+WorkingDirectory=/home/memlo/app
+EnvironmentFile=/home/memlo/memlo.env
+ExecStart=/home/memlo/app/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/memlo/app /home/memlo/backups /home/memlo
+
+[Install]
+WantedBy=multi-user.target
