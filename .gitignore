@@ -1,5 +1,8 @@
 # ---- Project-specific ----
 
+# Owner-only planning and operational notes (local copies, not public docs)
+/.private-notes/
+
 # Secrets — NEVER commit these
 .env
 *.env

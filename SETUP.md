@@ -136,7 +136,11 @@ calls. `test_routing.py` is a separate opt-in live AI test; discovery does not r
   enable Message Content Intent for your own app before restarting.
 - **Reminders seem missing:** check `/setup-status` for the timezone, the one-hour
   quiet period, the due date, and whether that deadline was already reminded about.
-- **Keeping it online:** [DEPLOY.md](DEPLOY.md) has an optional hosting runbook.
-  The same bot process must stay running for reviewers to try it.
+- **Keeping it online:** the bot process must stay running for people to try it.
+  You can host it on a Linux server such as Hack Club Nest. Install the same
+  requirements in a virtual environment, keep `.env` private, and use a service
+  manager such as systemd for automatic startup and crash recovery. Run only one
+  bot instance against a SQLite database, keep backups off the host, and leave
+  the health endpoint bound to loopback rather than exposing it publicly.
 
 For help, contact Emma on Discord at `@kidwithakrow._.`. Never send tokens or keys.
