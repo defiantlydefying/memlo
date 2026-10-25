@@ -1,11 +1,22 @@
 import type { Metadata } from "next";
-import { Bricolage_Grotesque, DM_Sans, IBM_Plex_Mono } from "next/font/google";
+import {
+  Bricolage_Grotesque,
+  DM_Sans,
+  IBM_Plex_Mono,
+  Nunito,
+} from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 
 const display = Bricolage_Grotesque({
   variable: "--font-display",
   subsets: ["latin"],
+});
+
+const heading = Nunito({
+  variable: "--font-heading",
+  subsets: ["latin"],
+  display: "swap",
 });
 
 const body = DM_Sans({
@@ -21,7 +32,8 @@ const utility = IBM_Plex_Mono({
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  const host =
+    requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
   const protocol = requestHeaders.get("x-forwarded-proto") ?? "https";
   const base = host ? `${protocol}://${host}` : "http://localhost:3000";
   const description =
@@ -51,7 +63,14 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={[display.variable, body.variable, utility.variable].join(" ")}>
+      <body
+        className={[
+          display.variable,
+          heading.variable,
+          body.variable,
+          utility.variable,
+        ].join(" ")}
+      >
         {children}
       </body>
     </html>

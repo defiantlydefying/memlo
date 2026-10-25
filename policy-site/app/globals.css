@@ -239,15 +239,15 @@ p {
 .chat-hero h1 {
   margin: 0;
   font:
-    650 clamp(3.6rem, 5.9vw, 5.6rem) / 0.99 var(--font-display),
+    700 clamp(3.6rem, 5.9vw, 5.6rem) / 1.04 var(--font-heading),
     sans-serif;
-  letter-spacing: -0.055em;
+  letter-spacing: -0.035em;
 }
 .chat-hero h1 strong {
   display: block;
   margin-top: 9px;
   max-width: 630px;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--lilac);
 }
 .chat-hero-intro {
@@ -520,7 +520,7 @@ p {
 .demo-intro h2 {
   max-width: 590px;
   font:
-    600 clamp(2rem, 3.4vw, 3rem) / 1.05 var(--font-display),
+    700 clamp(2rem, 3.4vw, 3rem) / 1.1 var(--font-heading),
     sans-serif;
   letter-spacing: -0.04em;
   margin-bottom: 0;
@@ -1078,9 +1078,9 @@ p {
 .section-intro h2 {
   margin: 4px 0 0;
   font:
-    600 clamp(2.8rem, 4.6vw, 4.3rem) / 1.04 var(--font-display),
+    700 clamp(2.8rem, 4.6vw, 4.3rem) / 1.1 var(--font-heading),
     sans-serif;
-  letter-spacing: -0.045em;
+  letter-spacing: -0.03em;
 }
 .section-intro > p:last-child:not(.eyebrow) {
   max-width: 330px;
@@ -1214,9 +1214,9 @@ p {
   z-index: 1;
   margin: 22px 0 0;
   font:
-    650 clamp(3.3rem, 6vw, 6rem) / 1 var(--font-display),
+    700 clamp(3.3rem, 6vw, 6rem) / 1.08 var(--font-heading),
     sans-serif;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.03em;
 }
 .trust-banner h2 span {
   color: #514270;
@@ -1301,9 +1301,9 @@ p {
 .trust-header h1,
 .policy-header h1 {
   font:
-    600 clamp(3.3rem, 6.5vw, 6rem) / 1.05 var(--font-display),
+    700 clamp(3.3rem, 6.5vw, 6rem) / 1.1 var(--font-heading),
     sans-serif;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.03em;
   margin: 20px 0 30px;
 }
 .hero-lede {
