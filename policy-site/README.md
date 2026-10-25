@@ -92,6 +92,21 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm test`: build the starter and verify its rendered loading skeleton
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
+## Dependency security
+
+Use Node 22.13+ (or a supported newer release) and the checked-in npm lockfile.
+Run `npm run audit`, `npm run typecheck`, and `npm test` after dependency updates.
+The targeted npm overrides patch dependencies still pinned by upstream tools:
+
+- `@esbuild-kit/core-utils` uses patched esbuild; `drizzle-kit check` verifies the
+  existing migration tooling still loads.
+- `vinext` uses the patched image-size parser on the same major release line.
+- `miniflare` uses patched Undici on the same major release line.
+
+Remove an override only after the upstream dependency resolves to a safe version
+without it, then regenerate the lockfile and repeat the checks. A clean advisory
+scan is not a guarantee that an application has no security issues.
+
 ## Learn More
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
