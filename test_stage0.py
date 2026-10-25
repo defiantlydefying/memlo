@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-os.environ.setdefault("ANTHROPIC_API_KEY", "not-needed-for-stage0-tests")
+os.environ["ANTHROPIC_API_KEY"] = os.environ.get("ANTHROPIC_API_KEY") or "offline-test"
 
 import bot
 
@@ -14,11 +14,15 @@ import bot
 class StageZeroTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
+        self.original_db_path = bot.DB_PATH
+        self.original_backup_dir = bot.BACKUP_DIR
         bot.DB_PATH = str(Path(self.tempdir.name) / "memlo.db")
         bot.BACKUP_DIR = Path(self.tempdir.name) / "backups"
         bot.init_db()
 
     def tearDown(self):
+        bot.DB_PATH = self.original_db_path
+        bot.BACKUP_DIR = self.original_backup_dir
         self.tempdir.cleanup()
 
     def test_new_server_tracks_nothing_until_setup(self):
