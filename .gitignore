@@ -2,6 +2,11 @@
 
 # Owner-only planning and operational notes (local copies, not public docs)
 /.private-notes/
+/REVENUE.md
+/OUTREACH.md
+/LISTING.md
+/SUPPORT_SERVER.md
+/DEPLOY.md
 
 # Secrets — NEVER commit these
 .env
