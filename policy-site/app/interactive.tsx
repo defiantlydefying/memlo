@@ -14,21 +14,20 @@ type ChatMessage = {
 };
 
 const startingMessages: ChatMessage[] = [
-  { id: 1, author: "pear", body: "ugh\nscience test tmr" },
+  { id: 1, author: "pear", body: "science test on October 27 — sharing the thermal energy notes here" },
   { id: 2, author: "eh--", body: "WHAT\nREALLY" },
   { id: 3, author: "pear", body: "😭😭\nyes bro\ndid u just find out" },
-  { id: 4, author: "eh--", body: "omfg 💔\nim soooo cooked" },
+  { id: 4, author: "eh--", body: "let’s practice from those notes" },
+  { id: 5, author: "Memlo", body: "Sample study set · Thermal energy\nThermal energy is the total kinetic energy of particles. Heat is energy transferred between objects; temperature measures average kinetic energy. Heat transfers by conduction (direct contact), convection (fluid movement), and radiation (electromagnetic waves)." },
 ];
 
 const examples = [
-  "what's due this week?",
-  "quiz me",
-  "science test tmr",
+  "/due",
+  "/quiz",
+  "/add-deadline",
 ];
 
 const quizText = [
-  "Let's heat things up with a thermal energy quiz! 🔥",
-  "",
   "1. What is thermal energy, and how is it related to the motion of particles in a substance?",
   "2. What's the difference between heat and temperature?",
   "3. Name and briefly describe the three main methods of heat transfer.",
@@ -37,20 +36,33 @@ const quizText = [
 function replyFor(input: string): Omit<ChatMessage, "id" | "author"> | null {
   const value = input.toLowerCase();
 
-  if (/quiz/.test(value)) {
-    return { body: quizText, replyTo: input, quiz: true };
+  if (/^\/?quiz(?:\s+(?:me|us))?(?:\s+on\b|$)/.test(value)) {
+    return { body: quizText, replyTo: input, quiz: true, private: value.startsWith("/quiz") };
   }
 
-  if (/what('s| is)? due|whats due|missed|what did i miss|catch me up/.test(value)) {
+  if (value.startsWith("/add-deadline")) {
+    return { body: "In Discord, /add-deadline opens a form for the assignment, due date, and optional class or audience. No AI is used. Dates and reminders follow the server’s selected timezone.", replyTo: input, private: true };
+  }
+
+  if (value.startsWith("/reschedule") || value.startsWith("/cancel-deadline")) {
+    return { body: "In Discord, choose a saved deadline to reschedule it or cancel its reminders. Only its original contributor or an admin can make that change. Cancellation asks for confirmation.", replyTo: input, private: true };
+  }
+
+  if (value.startsWith("/materials")) {
+    return { body: "Study shelf · Sample set\nThermal energy · 1 file\nIn the real bot, /quiz lets you choose a set and a difficulty. Unrelated topics stay separate.", replyTo: input, private: true };
+  }
+
+  if (/^\/due\b|what('s| is)? due|whats due|when.*(?:test|quiz)|missed|what did i miss|catch me up/.test(value)) {
     return {
-      body: "Science test tomorrow (7/28)! Also pear mentioned a study guide/worksheet link was coming, so keep an eye out for that if you haven't seen it yet.",
+      body: "Coming up · Sample deadline\nTue, Oct 27 · Science test\nAmerica/Chicago · Use /reschedule or /cancel-deadline to make a correction in Discord.",
       replyTo: input,
+      private: value.startsWith("/due"),
     };
   }
 
   if (/https?:\/\//.test(value) || /study guide|worksheet|pdf|slides/.test(value)) {
     return {
-      body: "🔗 Read study guide — Thermal energy. I've studied it. Try: @Memlo quiz us on it",
+      body: "This preview uses the sample Thermal energy notes above; it does not fetch files or links. In Discord, share study material, check /materials, then choose a saved set with /quiz.",
     };
   }
 
@@ -59,7 +71,7 @@ function replyFor(input: string): Omit<ChatMessage, "id" | "author"> | null {
   }
 
   return {
-    body: "I haven't seen anything about that yet. Share the class notes or files here and I can remember them for everyone.",
+      body: "This is an illustrative preview, not a live bot or AI chat. Try /due, /quiz, or /add-deadline, then add Memlo to Discord for the real tools.",
     replyTo: input,
   };
 }
@@ -80,12 +92,12 @@ export function InteractiveHero({ installUrl }: { installUrl: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>(startingMessages);
   const [draft, setDraft] = useState("");
   const [typing, setTyping] = useState(false);
-  const [memoryStatus, setMemoryStatus] = useState("Listening in approved channels");
+  const [memoryStatus, setMemoryStatus] = useState("Illustrative preview · no Discord or AI connection");
   const [privateQuiz, setPrivateQuiz] = useState<number | null>(null);
   const [privateDraft, setPrivateDraft] = useState(
     "1. Thermal energy is the kinetic energy of particles.\n\n2. Heat is transferred between objects; temperature measures average kinetic energy.\n\n3. Radiation transfers heat through waves.",
   );
-  const nextId = useRef(5);
+  const nextId = useRef(6);
   const feedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -103,8 +115,8 @@ export function InteractiveHero({ installUrl }: { installUrl: string }) {
 
     const response = replyFor(clean);
     if (!response) {
-      setMemoryStatus("Remembered quietly · Science test tomorrow");
-      window.setTimeout(() => setMemoryStatus("Listening in approved channels"), 3200);
+      setMemoryStatus("Preview only · nothing is saved to Discord");
+      window.setTimeout(() => setMemoryStatus("Illustrative preview · no Discord or AI connection"), 3200);
       return;
     }
 
@@ -133,6 +145,8 @@ export function InteractiveHero({ installUrl }: { installUrl: string }) {
         author: "Memlo",
         private: true,
         body: [
+          "Example feedback for the prefilled sample answers (not live grading):",
+          "",
           "✅ 1. Yep! Thermal energy is the total kinetic energy of particles, and more thermal energy means faster particle motion.",
           "✅ 2. Correct — heat transfers between objects; temperature measures the average kinetic energy of particles.",
           "❌ 3. You're missing conduction (direct contact) and convection (fluid currents). Radiation transfers through electromagnetic waves.",
@@ -152,7 +166,7 @@ export function InteractiveHero({ installUrl }: { installUrl: string }) {
           <h1 id="product-title">The message passes.<strong>The memory stays.</strong></h1>
         </div>
         <div className="chat-hero-intro">
-          <p>Memlo quietly remembers what matters, reads the study material your class shares, and answers when someone needs help.</p>
+          <p>Keep deadlines organized without AI. Add an assignment, correct its date, and get reminders. Optional AI turns shared class material into separate study sets and private practice quizzes.</p>
           <div className="hero-actions">
             <motion.a className="button-link hero-primary" href={installUrl} target="_blank" rel="noreferrer" whileHover={{ y: -3 }} whileTap={{ scale: .98 }}>Add Memlo to Discord <span aria-hidden="true">↗</span></motion.a>
             <a className="button-link hero-secondary" href="#how-it-works">How it works <span aria-hidden="true">↓</span></a>
@@ -163,12 +177,12 @@ export function InteractiveHero({ installUrl }: { installUrl: string }) {
 
       <motion.div className="live-demo-shell" initial={reduceMotion ? false : { opacity: 0, y: 36, scale: .985 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .75, delay: .12, ease: [0.22, 1, 0.36, 1] }}>
         <div className="live-demo-label">
-          <div><span className="live-dot" /><strong>Try the real Memlo flow</strong></div>
+          <div><span className="live-dot" /><strong>Try the Memlo flow</strong></div>
           <p>{memoryStatus}</p>
         </div>
 
         <div className="prompt-shelf" aria-label="Example messages">
-          <span>Try: “what’s due this week?” or “quiz me”</span>
+          <span>Try /due, /quiz, or /add-deadline</span>
           {examples.map((example) => <button key={example} type="button" onClick={() => sendMessage(example)} disabled={typing}>{example}</button>)}
         </div>
 
@@ -203,7 +217,7 @@ export function InteractiveHero({ installUrl }: { installUrl: string }) {
             </div>
 
             <div className="live-message-feed real-message-feed" aria-live="polite" ref={feedRef}>
-              <p className="discord-day-rule"><span>July 27, 2026</span></p>
+              <p className="discord-day-rule"><span>Sample class · October 25, 2026</span></p>
               <AnimatePresence initial={false}>
                 {messages.map((message) => {
                   const isBot = message.author === "Memlo";
@@ -217,7 +231,7 @@ export function InteractiveHero({ installUrl }: { installUrl: string }) {
                         <MessageText>{message.body}</MessageText>
                         {message.quiz && (
                           <>
-                            <p className="quiz-instruction"><em>Hit the button for private feedback, or just reply with your answers.</em></p>
+                            <p className="quiz-instruction"><em>In Discord, /quiz is private by default. Use Answer privately for feedback only you can see.</em></p>
                             <button className="discord-primary-button" type="button" onClick={() => setPrivateQuiz(message.id)}>✏️ Answer privately</button>
                           </>
                         )}
@@ -246,7 +260,7 @@ export function InteractiveHero({ installUrl }: { installUrl: string }) {
               <motion.form className="discord-modal" onSubmit={submitPrivateAnswer} initial={reduceMotion ? false : { opacity: 0, y: 18, scale: .97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: .98 }}>
                 <button className="modal-close" type="button" onClick={() => setPrivateQuiz(null)} aria-label="Close">×</button>
                 <h2 id="private-answer-title">Answer privately</h2>
-                <p>Only you and Memlo will see your answers.</p>
+                <p>Preview only: this form shows example feedback, not live grading. In Discord, AI grading processes answers through Anthropic and replies privately.</p>
                 <label htmlFor="private-quiz-answer">Type your answer after each question</label>
                 <textarea id="private-quiz-answer" value={privateDraft} onChange={(event) => setPrivateDraft(event.target.value)} rows={9} />
                 <div><button type="button" onClick={() => setPrivateQuiz(null)}>Cancel</button><button type="submit">Send privately</button></div>

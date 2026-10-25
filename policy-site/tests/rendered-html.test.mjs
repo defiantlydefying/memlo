@@ -49,12 +49,21 @@ test("renders the Memlo product homepage", async () => {
   assert.match(html, /<title>Memlo — The group chat that remembers<\/title>/i);
   assert.match(html, /The message passes\./);
   assert.match(html, /The memory stays\./);
-  assert.match(html, /Try the real Memlo flow/);
+  assert.match(html, /Try the Memlo flow/);
+  assert.match(html, /Illustrative preview/);
+  assert.match(html, /No AI needed/);
+  assert.match(html, /reschedule/);
+  assert.match(html, /cancel-deadline/);
+  assert.match(html, /private by default/);
+  assert.match(html, /Warm-up, Mixed, and Challenge/);
+  assert.match(html, /kidwithakrow\._\./);
+  assert.match(html, /permissions=84992/);
+  assert.doesNotMatch(html, /permissions=117760/);
   assert.match(html, /west ford hs study chat/);
   assert.match(html, /9th-grade/);
   assert.match(html, /Message #9th-grade/);
-  assert.match(html, /what’s due this week\?/);
-  assert.match(html, /quiz me/);
+  assert.match(html, /\/due/);
+  assert.match(html, /\/quiz/);
   assert.doesNotMatch(html, /Demo step/);
   assert.match(html, /Add Memlo to Discord/);
   assert.doesNotMatch(html, /Almanac/);
@@ -76,7 +85,9 @@ test("renders the Memlo privacy policy", async () => {
   const html = await response.text();
   assert.match(html, /Privacy Policy/);
   assert.match(html, /What Memlo processes/);
-  assert.match(html, /Last updated August 11, 2026/);
+  assert.match(html, /Last updated October 25, 2026/);
+  assert.match(html, /Text uploads are retained as extracted text/);
+  assert.match(html, /Without AI, slash commands/);
   assert.doesNotMatch(html, /Almanac/);
 });
 

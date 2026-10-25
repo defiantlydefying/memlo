@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 export const DISCORD_INSTALL_URL =
-  "https://discord.com/oauth2/authorize?client_id=1527179920386691072&permissions=117760&scope=bot%20applications.commands";
+  "https://discord.com/oauth2/authorize?client_id=1527179920386691072&permissions=84992&scope=bot%20applications.commands";
 
 export function Header() {
   return (
@@ -11,6 +11,7 @@ export function Header() {
       </Link>
       <nav className="nav" aria-label="Main navigation">
         <Link href="/#demo">Demo</Link>
+        <Link href="/#get-started">Commands</Link>
         <Link href="/trust">Trust</Link>
         <Link href="/privacy">Privacy</Link>
         <a className="nav-cta" href={DISCORD_INSTALL_URL} target="_blank" rel="noreferrer">Add to Discord</a>
@@ -22,12 +23,12 @@ export function Header() {
 export function Footer() {
   return (
     <footer className="footer">
-      <span>Memlo · Memory for class group chats</span>
+      <span>Memlo · Made by Emma Hsieh</span>
       <nav className="footer-links" aria-label="Footer navigation">
         <Link href="/trust">Trust</Link>
         <Link href="/privacy">Privacy</Link>
         <Link href="/terms">Terms</Link>
-        <a href="mailto:ehsieh175@gmail.com">Contact</a>
+        <a href="https://discord.gg/7UT2aPf5Us" target="_blank" rel="noreferrer">Discord · @kidwithakrow._.</a>
       </nav>
     </footer>
   );
@@ -59,7 +60,7 @@ export function PolicyLayout({
         <header className="policy-header">
           <p className="eyebrow">{eyebrow}</p>
           <h1>{title}</h1>
-          <p className="updated">Last updated August 11, 2026</p>
+          <p className="updated">Last updated October 25, 2026</p>
         </header>
         <div className="policy-grid">
           <aside className="toc" aria-label="On this page">

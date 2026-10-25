@@ -12,7 +12,7 @@ const sections = [
     label: "The short version",
     content: <div className="callout"><ul>
       <li>Memlo reads only class channels or categories a server administrator explicitly selects. A new installation reads nothing until setup is complete.</li>
-      <li>Relevant message text and study files are processed by Anthropic’s Claude API. Structured memories and study digests are stored in Memlo’s hosted database.</li>
+      <li>Manual deadlines and reminders work without AI. When AI features are enabled, relevant message text and study files are processed by Anthropic’s Claude API. Class memory is stored in Memlo’s SQLite database.</li>
       <li>Product analytics contain event names and operational counts only—never message text, filenames, study content, questions, or answers.</li>
       <li>Memlo does not sell personal data, show targeted ads, or train its own models on class content.</li>
       <li>Use <strong>/delete-my-data</strong> or, for administrators, <strong>/delete-server-data</strong>.</li>
@@ -23,10 +23,11 @@ const sections = [
     label: "What Memlo processes",
     content: <>
       <h3>Selected Discord channels</h3>
-      <p>Memlo receives messages, attachments, links, author information, roles, channel identifiers, and message identifiers from channels selected by a server administrator. It ignores every unselected channel. Discord requires the Message Content permission for this functionality.</p>
+      <p>With AI enabled, Memlo processes relevant messages, attachments, links, author information, roles, channel identifiers, and message identifiers in channels selected by a server administrator. This requires Discord’s Message Content intent. Without AI, slash commands can add and manage deadlines without reading passive class messages.</p>
       <h3>Stored class memory</h3>
       <p>When content is relevant, Memlo may store a short deadline or announcement summary; the original text behind a saved note; due dates; contributor Discord ID and display name; server and channel IDs; source links; study digests; generated quizzes and answer keys; grading feedback; and any applicable class or role.</p>
-      <p>Uploaded files are processed to produce a study digest. Memlo stores the digest and source reference, not a second permanent copy of the original file.</p>
+      <p>Text uploads are retained as extracted text so quizzes can use the actual source wording. Images and PDFs are processed into source-focused study text. Saved material includes a topic, filename, source reference, and contributor information. Memlo does not keep a separate permanent binary copy of uploaded images or PDFs.</p>
+      <p>Quizzes are private in Discord by default. Creating or grading one with AI still sends the relevant study content, questions, and submitted answers to Anthropic. Source-evidence checks can reduce unsupported questions but do not guarantee accuracy.</p>
       <h3>Privacy-preserving analytics</h3>
       <p>Memlo records installation, completed setup, first remembered deadline, first answer, first reminder, first completed quiz, referral-link display, and removal. Events may include server ID, timezone, scope type, source, or a numeric count.</p>
       <p>Analytics do not include message text, attachments, filenames, study digests, questions, answers, display names, or Discord user IDs.</p>
@@ -44,8 +45,8 @@ const sections = [
     label: "Service providers",
     content: <>
       <p><strong>Discord</strong> delivers messages and interactions to the bot. See the <a href="https://discord.com/privacy">Discord Privacy Policy</a>.</p>
-      <p><strong>Anthropic</strong> processes relevant message text and study material through the Claude API. See Anthropic’s <a href="https://www.anthropic.com/legal/privacy">Privacy Policy</a> and <a href="https://www.anthropic.com/legal/commercial-terms">Commercial Terms</a>.</p>
-      <p><strong>Hosting provider.</strong> Memlo runs on a hosted Linux server. Its SQLite database, provider storage where offered, operational logs, and rotating backups live on that infrastructure. The exact provider may change without changing the uses described here.</p>
+      <p><strong>Anthropic</strong> processes relevant message text, study material, quiz questions, and submitted practice answers when AI features are enabled. Manual deadline commands and scheduled reminders do not call the AI API. See Anthropic’s <a href="https://www.anthropic.com/legal/privacy">Privacy Policy</a> and <a href="https://www.anthropic.com/legal/commercial-terms">Commercial Terms</a>.</p>
+      <p><strong>Bot host.</strong> The operator’s computer or hosting server holds the SQLite database, operational logs, and rotating backups. Moving the bot to a hosting provider does not change the uses described here. This website is hosted separately from the bot.</p>
       <p>No other provider receives class content unless this policy is updated first.</p>
     </>,
   },
@@ -55,7 +56,7 @@ const sections = [
     content: <>
       <p>Class memory remains until it is deleted, the bot is removed, or the operator removes it during maintenance. Memlo creates a database backup every six hours and retains the latest 14 snapshots. Deleted records may remain in rotating backups until the relevant snapshots expire.</p>
       <ul>
-        <li><strong>/delete-my-data</strong> deletes records attributed to your Discord ID in that server after confirmation.</li>
+        <li><strong>/delete-my-data</strong> or <strong>@Memlo forget me</strong> deletes records attributed to your Discord ID in that server after confirmation.</li>
         <li><strong>/delete-server-data</strong> lets an administrator delete all class memory, settings, and server-linked telemetry after confirmation.</li>
         <li>Removing Memlo stops collection and automatically deletes that server’s content and configuration. A content-free aggregate removal event may remain.</li>
         <li>Email <a href="mailto:ehsieh175@gmail.com">ehsieh175@gmail.com</a> with an access or deletion request.</li>

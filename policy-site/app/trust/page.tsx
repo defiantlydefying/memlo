@@ -18,7 +18,7 @@ export default function TrustCenter() {
           <article>
             <p className="trust-label">Setup gate</p>
             <h2>Nothing until an admin chooses.</h2>
-            <p>A new installation reads nothing until an administrator selects a class channel or category.</p>
+            <p>A new installation reads nothing until an administrator uses /setup to select a class channel or category and timezone. /setup-status makes those boundaries visible.</p>
           </article>
           <article>
             <p className="trust-label">Analytics boundary</p>
@@ -28,7 +28,12 @@ export default function TrustCenter() {
           <article>
             <p className="trust-label">Deletion controls</p>
             <h2>Leave no class memory behind.</h2>
-            <p>Students can delete attributed records. Administrators can erase the server’s entire Memlo memory.</p>
+            <p>Use /delete-my-data or @Memlo forget me to delete your attributed records after confirmation. Administrators can erase the server’s entire Memlo memory.</p>
+          </article>
+          <article>
+            <p className="trust-label">AI is optional</p>
+            <h2>Deadlines do not need a model.</h2>
+            <p>Manual deadline forms, browsing, rescheduling, cancellation, and reminders work without AI. When AI study features are enabled, relevant content is sent to Anthropic. Private quizzes and grading are visible only to the requester in Discord; private does not mean local-only processing.</p>
           </article>
         </div>
 

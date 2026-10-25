@@ -2,7 +2,7 @@
 
 Published at: https://getmemlo.com/privacy
 
-**Last updated: August 9, 2026**
+**Last updated: October 25, 2026**
 
 Memlo is a Discord bot that acts as shared memory for class channels. It can
 remember deadlines and announcements, answer questions from that memory, remind a
@@ -15,24 +15,24 @@ Contact: **ehsieh175@gmail.com**
 - Memlo reads only the class channels or categories a server administrator
   explicitly selects during setup. A new installation reads nothing until setup is
   complete.
-- Relevant message text and study files are sent to Anthropic's Claude API so
-  Memlo can understand them. Structured memories and study digests are stored in
-  Memlo's hosted database.
+- Manual deadlines and reminders work without AI. When AI features are enabled,
+  relevant message text and study files are sent to Anthropic's Claude API.
+  Class memory is stored in Memlo's SQLite database.
 - Product analytics contain event names and operational counts only. Message text,
   filenames, study content, and questions are never sent to analytics.
 - Memlo does not sell personal data, show targeted ads, or train its own models on
   class content.
-- A user can run `/delete-my-data`; a server administrator can run
+- A user can run `/delete-my-data` or `@Memlo forget me`; a server administrator can run
   `/delete-server-data`.
 
 ## What Memlo processes
 
 ### Selected Discord channels
 
-Memlo receives messages, attachments, links, author information, roles, channel
-identifiers, and message identifiers from channels selected by a server administrator.
-It ignores every unselected channel. Discord requires the Message Content permission
-for this functionality.
+With AI enabled, Memlo processes relevant messages, attachments, links, author
+information, roles, channel identifiers, and message identifiers in channels selected
+by a server administrator. This requires Discord's Message Content intent. Without
+AI, slash commands can manage deadlines without reading passive class messages.
 
 ### Information stored as class memory
 
@@ -47,8 +47,14 @@ When content is relevant to the product, Memlo may store:
 - generated quizzes, answer keys, and grading feedback; and
 - the class or role an item applies to, when available.
 
-Uploaded files are processed to produce a study digest. Memlo stores the digest and
-source reference, not a second permanent copy of the original file.
+Text uploads are retained as extracted text so quizzes can use the actual source
+wording. Images and PDFs are processed into source-focused study text. Saved material
+includes a topic, filename, source reference, and contributor information. Memlo does
+not keep a separate permanent binary copy of uploaded images or PDFs.
+
+Quizzes are private in Discord by default. Creating or grading one with AI still
+sends relevant study content, questions, and submitted answers to Anthropic. Source
+checks reduce unsupported questions but do not guarantee accuracy.
 
 ### Privacy-preserving product analytics
 
@@ -86,15 +92,15 @@ profiles, or train its own machine-learning models on it.
 **Discord** delivers messages and interactions to the bot. Discord's processing is
 governed by the [Discord Privacy Policy](https://discord.com/privacy).
 
-**Anthropic** processes relevant message text and study material through the Claude
-API. Anthropic's processing is governed by its
+**Anthropic** processes relevant message text, study material, quiz questions, and
+practice answers when AI features are enabled. Manual deadline commands and
+scheduled reminders do not call the AI API. Anthropic's processing is governed by its
 [Privacy Policy](https://www.anthropic.com/legal/privacy) and
 [Commercial Terms](https://www.anthropic.com/legal/commercial-terms).
 
-**Hosting provider.** Memlo runs on a hosted Linux server. Its SQLite database,
-encrypted provider storage where offered, operational logs, and rotating database
-backups live on that infrastructure. The exact provider may change without changing
-the uses described in this policy.
+**Bot host.** The operator's computer or hosting server holds the SQLite database,
+operational logs, and rotating backups. Moving the bot to a hosting provider does
+not change the uses described here. The website is hosted separately from the bot.
 
 No other provider receives class content unless this policy is updated first.
 

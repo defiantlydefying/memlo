@@ -25,7 +25,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? "https";
   const base = host ? `${protocol}://${host}` : "http://localhost:3000";
   const description =
-    "See how Memlo remembers class deadlines, answers questions, and creates quizzes inside Discord—with explicit admin setup and student data controls.";
+    "Track, reschedule, and cancel class deadlines in Discord without AI. Optional AI organizes study sets and creates private practice quizzes. Built by Emma Hsieh.";
   return {
     title: {
       default: "Memlo — The group chat that remembers",
