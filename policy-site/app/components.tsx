@@ -7,14 +7,26 @@ export function Header() {
   return (
     <header className="topbar">
       <Link className="brand" href="/">
-        <span className="brand-mark" aria-hidden="true">M</span><span>Memlo</span>
+        <span className="brand-mark" aria-hidden="true">
+          m<span>✦</span>
+        </span>
+        <span>
+          memlo<span className="brand-period">.</span>
+        </span>
       </Link>
       <nav className="nav" aria-label="Main navigation">
         <Link href="/#demo">Demo</Link>
         <Link href="/#get-started">Commands</Link>
         <Link href="/trust">Trust</Link>
         <Link href="/privacy">Privacy</Link>
-        <a className="nav-cta" href={DISCORD_INSTALL_URL} target="_blank" rel="noreferrer">Add to Discord</a>
+        <a
+          className="nav-cta"
+          href={DISCORD_INSTALL_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Add to Discord
+        </a>
       </nav>
     </header>
   );
@@ -23,12 +35,23 @@ export function Header() {
 export function Footer() {
   return (
     <footer className="footer">
-      <span>Memlo · Made by Emma Hsieh</span>
+      <span>
+        <span className="footer-wordmark">memlo.</span>
+        <br />A little memory for your class.
+        <br />
+        <small>Made by Emma Hsieh</small>
+      </span>
       <nav className="footer-links" aria-label="Footer navigation">
         <Link href="/trust">Trust</Link>
         <Link href="/privacy">Privacy</Link>
         <Link href="/terms">Terms</Link>
-        <a href="https://discord.gg/7UT2aPf5Us" target="_blank" rel="noreferrer">Discord · @kidwithakrow._.</a>
+        <a
+          href="https://discord.gg/7UT2aPf5Us"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Discord · @kidwithakrow._.
+        </a>
       </nav>
     </footer>
   );
@@ -37,7 +60,9 @@ export function Footer() {
 export function SiteShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="site-shell">
-      <a className="skip-link" href="#main-content">Skip to content</a>
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       <Header />
       {children}
       <Footer />
@@ -66,7 +91,9 @@ export function PolicyLayout({
           <aside className="toc" aria-label="On this page">
             <span>On this page</span>
             {sections.map((section) => (
-              <a key={section.id} href={`#${section.id}`}>{section.label}</a>
+              <a key={section.id} href={`#${section.id}`}>
+                {section.label}
+              </a>
             ))}
           </aside>
           <article className="policy-content">

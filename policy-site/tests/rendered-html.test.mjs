@@ -47,8 +47,10 @@ test("renders the Memlo product homepage", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Memlo — The group chat that remembers<\/title>/i);
-  assert.match(html, /The message passes\./);
+  assert.match(html, /The message<br\s*\/> passes\./);
   assert.match(html, /The memory stays\./);
+  assert.match(html, /YOUR STUDY SHELF/);
+  assert.match(html, /Clear boundaries\./);
   assert.match(html, /Try the Memlo flow/);
   assert.match(html, /Illustrative preview/);
   assert.match(html, /No AI needed/);
