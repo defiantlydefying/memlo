@@ -1,123 +1,95 @@
 # Memlo
 
-Memlo is the memory of a class Discord: it notices deadlines and announcements,
-answers questions from what the class shared, reminds the group before work is due,
-and creates quizzes from images, PDFs, text files, Google documents, and webpages.
+Less scrolling. More studying.
 
-This repository is the YC Fall 2026 application project.
+Memlo is a Discord bot that helps your class keep track of what matters. It
+organizes deadlines and sends reminders without needing AI. Optional AI tools
+remember class announcements, answer questions, and turn study material into quizzes.
 
-## Trust model
+## What it does
 
-- A new Discord installation reads **nothing** until an administrator runs `/setup`.
-- The admin selects a class category or individual text channel and a server timezone.
-- Memlo ignores all unselected channels.
-- Stored contributions include the Discord user ID so `/delete-my-data` is reliable
-  even after a display-name change.
-- Product analytics contain event names and limited operational properties only—never
-  message text, filenames, study material, questions, or answers.
+- **Tracks assignments without AI:** use a form to add deadlines, then browse,
+  reschedule or cancel them. Reminders work without a paid API.
+- **Remembers the important stuff:** optional AI notices dates and class announcements.
+- **Answers from your class’s memory:** ask what’s due or what your teacher said.
+- **Helps you practice:** create three-question quizzes from screenshots, PDFs,
+  text files, and study links, with an option for private feedback.
+- **Keeps study sets organized:** files shared together stay together, and different
+  topics can have their own quizzes.
+- **Keeps deadlines up to date:** edit the original message, reschedule an
+  assignment, or cancel a deadline that no longer applies.
 
-See [PRIVACY.md](PRIVACY.md) and [TERMS.md](TERMS.md).
+## Add Memlo to Discord
 
-## Local setup
+[Add Memlo to your server](https://discord.com/oauth2/authorize?client_id=1527179920386691072&permissions=84992&scope=bot%20applications.commands)
 
-1. Install Python 3.11 or newer and the dependencies:
+1. Have a server admin open the invite link and add Memlo to your class server.
+2. Run `/setup` in Discord to choose a class channel or category and your timezone.
+3. Try `/add-deadline` and `/due`, or `/help` for the full guide.
 
-   ```bash
-   python3 -m venv .venv
-   .venv/bin/pip install -r requirements.txt
-   ```
+Memlo only listens in the channels an admin selects. It reads nothing until setup
+is complete. You don’t need to install Python, provide API keys, or host anything
+yourself.
 
-2. Create a Discord application and bot in the
-   [Discord Developer Portal](https://discord.com/developers/applications). Enable
-   **Message Content Intent**. Configure a Discord-provided install link with the
-   `bot` and `application.commands` scopes and only the permissions Memlo needs:
-   View Channels, Send Messages, Read Message History, Embed Links, and Attach Files.
+Memlo needs **View Channels**, **Send Messages**, **Read Message History**, and
+**Embed Links**—not Administrator. For tracked threads, also allow **Send Messages
+in Threads**. The human running `/setup` needs Manage Server permission.
 
-3. Set the required environment variables:
+## Try it out
 
-   ```bash
-   export DISCORD_TOKEN="..."
-   export ANTHROPIC_API_KEY="..."
-   ```
-
-4. Optional production settings:
-
-   ```bash
-   export CLASS_TIMEZONE="America/New_York" # default for setup suggestions
-   export DISCORD_INSTALL_URL="https://discord.com/oauth2/authorize?client_id=..."
-   export PRIVACY_URL="https://getmemlo.com/privacy"
-   export TERMS_URL="https://getmemlo.com/terms"
-   export SUPPORT_SERVER_URL="https://discord.gg/7UT2aPf5Us"
-   export BACKUP_DIR="/home/memlo/backups"
-   export BACKUP_RETENTION="14"
-   export HEALTH_HOST="127.0.0.1"
-   export HEALTH_PORT="8080"               # set 0 to disable
-   export LOG_PATH="/home/memlo/memlo.log"
-   ```
-
-5. Run the worker:
-
-   ```bash
-   .venv/bin/python bot.py
-   ```
-
-6. In Discord, a server administrator runs `/setup`, chooses exactly one category or
-   channel, and enters the server's IANA timezone. Add more scopes with
-   `/track-category` or `/track-channel`.
-
-## Commands
-
-| Command | Who | Purpose |
-|---|---|---|
-| `/setup` | Manage Server | Choose the first class scope and timezone |
-| `/track-category` | Manage Server | Add a category |
-| `/track-channel` | Manage Server | Add one text channel |
-| `/untrack-category` | Manage Server | Remove a category |
-| `/untrack-channel` | Manage Server | Remove a channel |
-| `/setup-status` | Anyone | Show timezone and tracked scopes privately |
-| `/delete-my-data` | Anyone | Delete records attributed to the requester |
-| `/delete-server-data` | Manage Server | Delete all data and reset setup |
-| `/privacy` | Anyone | Show the privacy summary and policy links |
-| `/support` | Anyone | Join support or get the private contact email |
-| `/invite` | Anyone | Get the install link and record a referral event |
-
-Existing mention-based questions and quiz requests still work inside selected channels.
-
-## Operations
-
-- `GET http://127.0.0.1:8080/health` returns Discord readiness, database status,
-  connected-server count, last reminder tick, last backup, and last content-free error.
-- A transactionally consistent SQLite backup is created every six hours. The newest
-  14 snapshots are retained by default.
-- Application logs rotate at 5 MB with three historical files.
-- Expensive operations use per-user, per-server sliding-window rate limits.
-- Reminder scheduling is evaluated separately in each configured server timezone.
-
-## Tests
-
-Offline tests require no Discord connection and no real Anthropic key:
-
-```bash
-ANTHROPIC_API_KEY=test python3 -m unittest -v test_stage0.py
-ANTHROPIC_API_KEY=test python3 test_links.py
-python3 -m py_compile bot.py
+```text
+@Memlo what’s due tomorrow?
+@Memlo when is our chemistry quiz?
+@Memlo quiz me on chemical reactions
 ```
 
-`test_routing.py` exercises model judgment against real stored material and therefore
-requires a real Anthropic key and a local `memlo.db`.
+To practice from a particular upload, reply to that upload with
+`@Memlo quiz me`. Use **Answer privately** on the quiz for feedback only you can
+see; replying with answers in the channel makes the feedback public.
 
-## Repository layout
+Or use `/quiz` to choose a saved study set and a difficulty: **Warm-up**, **Mixed**,
+or **Challenge**. These quizzes are private by default; turn off the private option
+to share one with the channel.
 
-- `bot.py` — Discord worker, storage, slash commands, and operational tasks
-- `memlo.db` — local SQLite state, created at runtime and ignored by git
-- `backups/` — rotating SQLite snapshots, ignored by git
-- `PRIVACY.md` — source privacy policy
-- `TERMS.md` — source terms
-- `DEPLOY.md` — production VPS and systemd runbook
-- `test_stage0.py` — offline launch-readiness tests
-- `test_links.py` — offline link helper tests
+| Command | What it does |
+| --- | --- |
+| `/help` | Shows examples and a quick guide |
+| `/add-deadline` | Opens an assignment form—no AI required |
+| `/due` | Shows saved upcoming deadlines and their sources |
+| `/materials` | Shows the study sets saved in this channel |
+| `/quiz` | Creates a quiz from a study set you choose |
+| `/reschedule` | Corrects a saved due date |
+| `/cancel-deadline` | Cancels an assignment’s deadline and reminders |
+| `/setup-status` | Shows which channels Memlo is listening in |
+| `/delete-my-data` | Deletes your saved contributions |
+| `/privacy`, `/support`, `/invite` | Shows policy, contact, or installation links |
+| `/setup` | Admin: chooses the first class channel/category and timezone |
+| `/track-channel`, `/track-category` | Admin: adds channels or categories |
+| `/untrack-channel`, `/untrack-category` | Admin: stops listening in those scopes |
+| `/delete-server-data` | Admin: confirms deletion of all Memlo data in this server |
 
-## Current gate
+Rescheduling and cancellation require the original contributor or a server admin.
+Memlo can miss things, and AI answers can be wrong—check the original source or
+your teacher when something matters.
 
-The next proof point is five real class servers that remain active after three weeks.
-Do not optimize for raw installs before retained usage exists.
+## Run your own copy
+
+See [SETUP.md](SETUP.md) for the complete rebuild instructions and a fresh-server
+walkthrough. The quick start is `python3 setup_memlo.py`, add your own Discord bot
+token to `.env`, then run `.venv/bin/python bot.py` from the project folder.
+An AI key is optional; the entire deadline workflow works without one.
+
+## Privacy
+
+You control your saved contributions with `/delete-my-data` or
+`@Memlo forget me`. See the [privacy policy](PRIVACY.md) and
+[terms of service](TERMS.md) for details.
+
+## Contact
+
+Made by **Emma Hsieh**.
+
+Discord: `@kidwithakrow._.`
+
+Questions, bugs, or ideas? [Reach me through the Memlo Discord](https://discord.gg/7UT2aPf5Us),
+or use `/support` in Discord for contact options.
