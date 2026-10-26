@@ -24,12 +24,17 @@ remember class announcements, answer questions, and turn study material into qui
 [Add Memlo to your server](https://discord.com/oauth2/authorize?client_id=1527179920386691072&permissions=84992&scope=bot%20applications.commands)
 
 1. Have a server admin open the invite link and add Memlo to your class server.
-2. Run `/setup` in Discord to choose a class channel or category and your timezone.
+2. Run `/setup` in your class text channel, pick your timezone from the menu,
+   and click **Start Memlo**. No timezone codes to memorize.
 3. Try `/add-deadline` and `/due`, or `/help` for the full guide.
 
 Memlo only listens in the channels an admin selects. It reads nothing until setup
 is complete. You don’t need to install Python, provide API keys, or host anything
 yourself.
+
+For another channel or a whole category, use `/setup`’s optional channel/category
+picker. For a city not in the menu, use its `timezone_name` option and search by
+city name (for example, “Chicago” or “London”), then select a suggestion.
 
 Memlo needs **View Channels**, **Send Messages**, **Read Message History**, and
 **Embed Links**—not Administrator. For tracked threads, also allow **Send Messages

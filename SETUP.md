@@ -89,8 +89,10 @@ the database, logs and `.venv` are ignored by Git. Don’t publish database back
 In your private test server:
 
 1. Create a normal text channel, such as `#memlo-test`.
-2. As a server admin, run `/setup`, choose that channel, and enter your timezone.
-   The bot tracks nothing before this step.
+2. As a server admin, run `/setup` in that channel, choose your timezone from the
+   menu, and click **Start Memlo**. The bot tracks nothing until you confirm.
+   If your city is missing, use the command’s `timezone_name` option and search
+   for it; the optional channel/category pickers still let you select another scope.
 3. Run `/add-deadline`. Enter an assignment title, tomorrow’s date in `YYYY-MM-DD`
    form, and optionally an audience. The form saves locally and posts a receipt.
 4. Run `/due`. Check the title, due date and source link. Submit the same title,

@@ -54,6 +54,7 @@ from quiz_service import QuizError, QuizService, valid_quiz
 from quiz_controls import register_command as register_quiz_command
 from quiz_generation import generate_quiz
 from deadline_form import register_command as register_deadline_form
+from setup_controls import SetupView, timezone_choices
 from link_reader import (
     CLAUDE_IMAGE_TYPES, MAX_LINKS_PER_MESSAGE, MAX_FETCH_BYTES, MAX_PAGE_CHARS,
     FETCH_TIMEOUT, BROWSER_UA, URL_RE, extract_urls, fetch_link, _google_export,
@@ -1712,29 +1713,66 @@ async def _require_admin(interaction):
 @app_commands.guild_only()
 @app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(
-    timezone_name="IANA timezone, such as America/Chicago or Europe/London",
+    timezone_name="Search by city (Chicago, London…) or leave blank for a timezone menu",
     category="Track every text channel in this class category",
     channel="Or track one class text channel",
 )
 async def setup_command(interaction: discord.Interaction,
-                        timezone_name: str = DEFAULT_TIMEZONE,
+                        timezone_name: str = None,
                         category: discord.CategoryChannel = None,
                         channel: discord.TextChannel = None):
     if not await _require_admin(interaction):
         return
-    if (category is None) == (channel is None):
+    if category is not None and channel is not None:
         await interaction.response.send_message(
             "Choose exactly one **category** or one **channel**. You can add more "
             "later with `/track-category` or `/track-channel`.", ephemeral=True)
         return
+    if category is None and channel is None:
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "Run `/setup` in a normal class text channel, or choose a **channel** "
+                "or **category** option.", ephemeral=True)
+            return
+        channel = interaction.channel
+    settings = get_guild_settings(interaction.guild_id)
+    selected_timezone = timezone_name or (settings["timezone"] if settings else DEFAULT_TIMEZONE)
     try:
-        ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
+        ZoneInfo(selected_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
         await interaction.response.send_message(
-            "I don’t recognize that timezone. Use an IANA name like "
-            "`America/Chicago`, `America/New_York`, or `Europe/London`.",
+            "I don’t recognize that timezone. Search for your city in the "
+            "`timezone_name` suggestions, or leave it blank to use the menu.",
             ephemeral=True)
         return
+    if timezone_name is None:
+        scope = f"the **{category.name}** category" if category else channel.mention
+
+        async def finish(setup_interaction, chosen_timezone):
+            return await _complete_setup(setup_interaction, chosen_timezone, category, channel)
+
+        view = SetupView(interaction.user.id, selected_timezone, scope, finish)
+        await interaction.response.send_message(view.prompt(), view=view, ephemeral=True)
+        view.message = await interaction.original_response()
+        return
+    await _complete_setup(interaction, selected_timezone, category, channel)
+
+
+@setup_command.autocomplete("timezone_name")
+async def setup_timezone_autocomplete(interaction: discord.Interaction, current: str):
+    settings = get_guild_settings(interaction.guild_id) if interaction.guild_id else None
+    return timezone_choices(current, settings["timezone"] if settings else DEFAULT_TIMEZONE)
+
+
+async def _complete_setup(interaction, timezone_name, category, channel):
+    if not await _require_admin(interaction):
+        return False
+    # The chosen channel may have been deleted while the setup menu was open.
+    target = interaction.guild.get_channel(category.id if category else channel.id)
+    expected = discord.CategoryChannel if category else discord.TextChannel
+    if not isinstance(target, expected):
+        await interaction.response.send_message("That channel was removed. Run `/setup` again.", ephemeral=True)
+        return False
     await interaction.response.defer(ephemeral=True, thinking=True)
     configure_guild(interaction.guild_id, timezone_name, interaction.user.id)
     if category is not None:
@@ -1752,6 +1790,7 @@ async def setup_command(interaction: discord.Interaction,
     await interaction.followup.send(
         f"✅ Memlo is ready. I’ll only read {scope}, using `{timezone_name}` "
         "for dates and reminders. Everything else stays ignored.", ephemeral=True)
+    return True
 
 
 @tree.command(name="track-category", description="Add a class category to Memlo")
