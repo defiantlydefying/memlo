@@ -29,7 +29,7 @@ const startingMessages: ChatMessage[] = [
   },
 ];
 
-const examples = ["/due", "/quiz", "/add-deadline"];
+const examples = ["/help", "/due", "/quiz", "/add-deadline"];
 
 const quizText = [
   "1. What is thermal energy, and how is it related to the motion of particles in a substance?",
@@ -40,12 +40,27 @@ const quizText = [
 function replyFor(input: string): Omit<ChatMessage, "id" | "author"> | null {
   const value = input.toLowerCase();
 
+  if (value.startsWith("/help")) {
+    return {
+      body: "Commands to do things. Mentions to ask questions.\nIn Discord, /help opens buttons for Upcoming deadlines, Add deadline, Study material, Start quiz, and Setup status. Try the sample commands below.",
+      replyTo: input,
+      private: true,
+    };
+  }
+
+  if (/@memlo.*quiz|^quiz\s+(?:me|us)/.test(value)) {
+    return {
+      body: "In Discord, this offers a Start quiz button that opens the same /quiz study-set picker. Choose your material and difficulty; quizzes are private by default.",
+      replyTo: input,
+    };
+  }
+
   if (/^\/?quiz(?:\s+(?:me|us))?(?:\s+on\b|$)/.test(value)) {
     return {
-      body: quizText,
+      body: "Sample quiz after choosing Thermal energy · Mixed and pressing Start quiz in Discord:\n\n" + quizText,
       replyTo: input,
       quiz: true,
-      private: value.startsWith("/quiz"),
+      private: true,
     };
   }
 

@@ -29,8 +29,8 @@ export default function Home() {
                 “important bits.”
               </h2>
               <p>
-                Not another app to check. Just a helpful presence in the class
-                Discord you already use.
+                Commands to do things. Mentions to ask questions. Start with
+                <code> /help</code> for a button menu—no commands to memorize.
               </p>
             </div>
             <div className="outcome-list">
@@ -53,8 +53,8 @@ export default function Home() {
                 <h3>“What did I miss?” gets a real answer.</h3>
                 <p>
                   Optional AI answers from the notes, slides, links, and images
-                  shared in approved channels. Check important answers against
-                  the original source.
+                  shared in approved channels. Ask <code>@Memlo explain these notes</code>.
+                  Check important answers against the original source.
                 </p>
               </article>
               <article>
@@ -63,9 +63,10 @@ export default function Home() {
                 </p>
                 <h3>The chat becomes the study session.</h3>
                 <p>
-                  Use <code>/quiz</code> to choose a saved study set and
-                  difficulty. Topics stay separate, quizzes are private by
-                  default, and feedback stays in Discord.
+                  Use <code>/quiz</code>, pick a saved study set and difficulty,
+                  then press Start quiz. Topics stay separate, quizzes are private by
+                  default, and feedback stays in Discord. Mention “quiz me” and
+                  Memlo points you to that same flow.
                 </p>
               </article>
             </div>

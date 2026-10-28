@@ -69,6 +69,8 @@ test("renders the Memlo product homepage", async () => {
   assert.doesNotMatch(html, /Demo step/);
   assert.match(html, /Add Memlo to Discord/);
   assert.match(html, /Try Memlo live/);
+  assert.match(html, /Commands to do things\. Mentions to ask questions\./);
+  assert.match(html, /button menu/);
   assert.match(html, /https:\/\/discord\.gg\/7UT2aPf5Us/);
   assert.doesNotMatch(html, /Almanac/);
 });
