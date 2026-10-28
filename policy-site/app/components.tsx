@@ -2,6 +2,7 @@ import Link from "next/link";
 
 export const DISCORD_INSTALL_URL =
   "https://discord.com/oauth2/authorize?client_id=1527179920386691072&permissions=84992&scope=bot%20applications.commands";
+export const DISCORD_SUPPORT_URL = "https://discord.gg/7UT2aPf5Us";
 
 export function Header() {
   return (
@@ -16,6 +17,9 @@ export function Header() {
       </Link>
       <nav className="nav" aria-label="Main navigation">
         <Link href="/#demo">Demo</Link>
+        <a href={DISCORD_SUPPORT_URL} target="_blank" rel="noreferrer">
+          Try live
+        </a>
         <Link href="/#get-started">Commands</Link>
         <Link href="/trust">Trust</Link>
         <Link href="/privacy">Privacy</Link>
@@ -46,7 +50,7 @@ export function Footer() {
         <Link href="/privacy">Privacy</Link>
         <Link href="/terms">Terms</Link>
         <a
-          href="https://discord.gg/7UT2aPf5Us"
+          href={DISCORD_SUPPORT_URL}
           target="_blank"
           rel="noreferrer"
         >

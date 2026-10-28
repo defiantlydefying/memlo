@@ -124,7 +124,13 @@ function MessageText({ children }: { children: string }) {
   );
 }
 
-export function InteractiveHero({ installUrl }: { installUrl: string }) {
+export function InteractiveHero({
+  installUrl,
+  supportUrl,
+}: {
+  installUrl: string;
+  supportUrl: string;
+}) {
   const reduceMotion = useReducedMotion();
   const [messages, setMessages] = useState<ChatMessage[]>(startingMessages);
   const [draft, setDraft] = useState("");
@@ -291,9 +297,18 @@ export function InteractiveHero({ installUrl }: { installUrl: string }) {
             <a className="button-link hero-secondary" href="#demo">
               Play with the demo <span aria-hidden="true">↓</span>
             </a>
+            <a
+              className="button-link hero-secondary hero-support"
+              href={supportUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Try Memlo live <span aria-hidden="true">↗</span>
+            </a>
           </div>
           <p className="hero-proof inverse-proof">
-            Admin-selected channels only · Nothing is read before setup
+            Admin-selected channels only · Nothing is read before setup · Live
+            test server available
           </p>
         </div>
         <div

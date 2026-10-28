@@ -1,12 +1,19 @@
 import Link from "next/link";
-import { DISCORD_INSTALL_URL, SiteShell } from "./components";
+import {
+  DISCORD_INSTALL_URL,
+  DISCORD_SUPPORT_URL,
+  SiteShell,
+} from "./components";
 import { InteractiveHero, Reveal } from "./interactive";
 
 export default function Home() {
   return (
     <SiteShell>
       <main className="landing" id="main-content">
-        <InteractiveHero installUrl={DISCORD_INSTALL_URL} />
+        <InteractiveHero
+          installUrl={DISCORD_INSTALL_URL}
+          supportUrl={DISCORD_SUPPORT_URL}
+        />
 
         <Reveal>
           <section
