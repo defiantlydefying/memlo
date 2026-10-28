@@ -136,8 +136,8 @@ def material_cards(groups):
                      "become one study set.", color=STUDY_TEAL)]
     pages = []
     for offset in range(0, len(groups), 5):
-        embed = card("Study shelf", "Ask `@Memlo quiz me on <topic>`, or reply to "
-                     "an upload with `@Memlo quiz me` to use that exact set.", color=STUDY_TEAL)
+        embed = card("Study shelf", "Use `/quiz` to choose a saved set and difficulty. "
+                     "Quizzes are private by default.", color=STUDY_TEAL)
         for group in groups[offset:offset + 5]:
             count = group["file_count"]
             embed.add_field(
@@ -150,18 +150,16 @@ def material_cards(groups):
 
 
 def help_card():
-    embed = card("A little less scrolling. A little more studying.",
-                 "I remember what’s shared in your selected class channels. "
-                 "Here’s how to use that memory.")
+    embed = card("What would you like to do?",
+                 "**Commands to do things. Mentions to ask questions.**\n"
+                 "Use the buttons below in a tracked class channel, or type a command.")
     for name, value in (
         ("Find what matters", "`/add-deadline` — add an assignment with a form, no AI needed\n"
          "`/due` — saved upcoming deadlines, with sources\n"
          "`/materials` — browse the study sets in this channel\n"
-         "`@Memlo what’s due tomorrow?` — ask a specific question"),
-        ("Practice from your pages", "Share files or a study link, then ask "
-         "`@Memlo quiz me on <topic>`, or use `/quiz` to choose a saved set "
-         "and difficulty. Slash-command quizzes are private by default. "
-         "Reply to an upload to choose that set. "
+         "`@Memlo explain these notes` — ask about class material (optional AI)"),
+        ("Practice from your pages", "Share files or a study link, then use "
+         "`/quiz` to choose a saved set and difficulty. Quizzes are private by default. "
          "Use **Answer privately** for feedback only you can see."),
         ("You’re in control", "`/setup-status` — see where I’m listening\n"
          "`/reschedule` — correct a saved due date\n"

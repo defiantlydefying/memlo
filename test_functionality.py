@@ -263,7 +263,7 @@ class AsyncBehaviorTests(DatabaseCase, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(saved)
         self.assertIn("5 MB", issues[0])
 
-    async def test_reply_to_older_upload_uses_it_not_latest(self):
+    async def test_mention_quiz_offers_shared_flow_without_guessing(self):
         self.add_material("old", source_id=123)
         self.add_material("new", source_id=456)
         message = fake_message("@Memlo quiz me")
@@ -271,16 +271,18 @@ class AsyncBehaviorTests(DatabaseCase, unittest.IsolatedAsyncioTestCase):
         with patch.object(bot, "make_quiz", return_value={
                 "quiz": "1. Why?\n2. How?\n3. What?", "answer_key": "secret"}) as make:
             await bot._handle_message(message)
-        self.assertEqual(make.call_args.args[2][0]["quiz_group"], "old")
-        sent_embed = message.reply.call_args.kwargs["embed"]
-        self.assertNotIn("secret", sent_embed.description)
+        make.assert_not_called()
+        self.assertIn("Start quiz", message.reply.call_args.args[0])
+        view = message.reply.call_args.kwargs["view"]
+        self.assertEqual(view.requester_id, message.author.id)
+        self.assertEqual(view.children[0].label, "Start quiz")
 
     async def test_empty_memory_does_not_generate_fictional_quiz(self):
         with patch.object(bot, "make_quiz") as make:
             message = fake_message("@Memlo quiz me")
             await bot._handle_message(message)
         make.assert_not_called()
-        self.assertIn("nothing to quiz", message.reply.call_args.args[0])
+        self.assertIn("/quiz", message.reply.call_args.args[0])
 
     async def test_failed_new_upload_does_not_quiz_old_material(self):
         self.add_material("old", source_id=123)

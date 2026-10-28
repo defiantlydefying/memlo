@@ -2,10 +2,10 @@
 Memlo — the magic loop
 A Discord bot that is the memory of your class group chat.
 
-  1. LISTENS to every message and, using Claude Haiku, decides if it's worth
-     remembering (a deadline or a teacher announcement). Saves it to a database.
-  2. ANSWERS when you @-mention it ("@Memlo what's due?") using Claude Sonnet,
-     pulling from everything it has remembered.
+  1. COMMANDS handle actions: deadlines, study-set selection, quizzes, and setup.
+     /help offers buttons that call those same handlers.
+  2. MENTIONS answer questions about remembered class material with optional AI.
+     Only admin-selected channels are read; nothing is read before setup.
   3. REMINDS the group on its own when something is due soon — nobody has to ask.
      This is the "it just knew" moment.
 
@@ -55,6 +55,7 @@ from quiz_controls import register_command as register_quiz_command
 from quiz_generation import generate_quiz
 from deadline_form import register_command as register_deadline_form
 from setup_controls import SetupView, timezone_choices
+from navigation import CommandMenu
 from link_reader import (
     CLAUDE_IMAGE_TYPES, MAX_LINKS_PER_MESSAGE, MAX_FETCH_BYTES, MAX_PAGE_CHARS,
     FETCH_TIMEOUT, BROWSER_UA, URL_RE, extract_urls, fetch_link, _google_export,
@@ -1585,7 +1586,8 @@ class CardPages(discord.ui.View):
 
 @tree.command(name="help", description="A quick guide to asking, studying, and managing memory")
 async def help_command(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=help_card(), ephemeral=True)
+    await interaction.response.send_message(embed=help_card(),
+        view=CommandMenu(sys.modules[__name__], interaction.user.id), ephemeral=True)
 
 
 async def _browse_memory(interaction, kind):
@@ -1789,7 +1791,11 @@ async def _complete_setup(interaction, timezone_name, category, channel):
                  {"scope_type": scope_type, "timezone": timezone_name}, once=True)
     await interaction.followup.send(
         f"✅ Memlo is ready. I’ll only read {scope}, using `{timezone_name}` "
-        "for dates and reminders. Everything else stays ignored.", ephemeral=True)
+        "for dates and reminders. Everything else stays ignored.\n\n"
+        "**Commands to do things; mentions to ask questions.**\n"
+        "In your tracked class channel, use `/help` for the button menu, "
+        "`/add-deadline` to add an assignment, or `/quiz` to choose a study set. "
+        "For a question about class material, ask `@Memlo explain these notes`.", ephemeral=True)
     return True
 
 
@@ -2090,8 +2096,8 @@ class CombineView(discord.ui.View):
             child.disabled = True
         if self.message:
             try:
-                await self.message.edit(content="Kept separate. Reply to either upload "
-                                        "with `@Memlo quiz me` to choose its set.", view=self)
+                await self.message.edit(content="Kept separate. Use `/quiz` "
+                                        "to choose either study set.", view=self)
             except discord.HTTPException:
                 pass
 
@@ -2125,8 +2131,7 @@ class CombineView(discord.ui.View):
             for child in self.children:
                 child.disabled = True
             await interaction.edit_original_response(
-                content="Kept separate. Reply to either upload with `@Memlo quiz me` "
-                        "to choose its set.", view=self)
+                content="Kept separate. Use `/quiz` to choose either study set.", view=self)
             self.stop()
 
 
@@ -2201,7 +2206,7 @@ async def confirm_study_set(message, ingested, issues, prior_groups):
             for item in ingested), 3200)
         embed.add_field(name="Ready to practice",
                         value=f"{len(ingested)} {'files' if len(ingested) != 1 else 'file'} · "
-                        "one study set. Reply to the upload with `@Memlo quiz me`, "
+                        "one study set. Use `/quiz` to choose it and start practicing, "
                         "or browse `/materials`.", inline=False)
     if issues:
         embed.add_field(name="Needs another try", value=clip("\n".join(issues), 1024), inline=False)
@@ -2371,38 +2376,11 @@ async def handle_admin_command(message: discord.Message) -> bool:
                 f"{names or '  • none'}")
         return True
 
-    category = _category_of(message.channel)
-    if category is None:
-        await message.reply(
-            "This channel isn't inside a category. Put it under one (like a **7th "
-            "Grade** category) first — I switch tracking on a whole category at once.")
-        return True
-
-    if is_activate:
-        settings = await asyncio.to_thread(get_guild_settings, message.guild.id)
-        if not settings or settings["setup_status"] != "configured":
-            await message.reply(
-                "Setup now requires an explicit timezone and scope. Please run `/setup`; "
-                "until then I’m reading nothing.")
-            return True
-        await asyncio.to_thread(
-            activate_category, category.id, message.guild.id, category.name,
-            message.author.display_name, message.author.id)
-        channels = ", ".join(f"#{c.name}" for c in category.text_channels) or "(none yet)"
-        await message.reply(
-            f"✅ Now tracking the **{category.name}** category: {channels}. "
-            "Each channel keeps its own separate memory — a deadline in one class "
-            "never shows up in another.")
-        LOGGER.info("Category activated: guild=%s category=%s",
-                    message.guild.id, category.id)
-    else:  # deactivate
-        await asyncio.to_thread(deactivate_category, category.id)
-        await message.reply(
-            f"🛑 Stopped tracking the **{category.name}** category — I'll ignore its "
-            "channels now. (What I already remembered is still there; say "
-            "`@Memlo forget me` in a channel to clear your own.)")
-        LOGGER.info("Category deactivated: guild=%s category=%s",
-                    message.guild.id, category.id)
+    await message.reply(
+        "Tracking changes use slash commands so you can choose the exact scope. "
+        "Use `/setup` first, then `/track-channel` or `/track-category` to add one; "
+        "use `/untrack-channel` or `/untrack-category` to stop tracking. "
+        "Nothing was changed by this message.", mention_author=False)
     return True
 
 
@@ -2456,7 +2434,8 @@ async def _handle_message(message: discord.Message):
         return
 
     if addressed and text.casefold().rstrip(".!?") in {"help", "commands", "what can you do"}:
-        await message.reply(embed=help_card())
+        await message.reply(embed=help_card(),
+            view=CommandMenu(sys.modules[__name__], message.author.id), mention_author=False)
         return
 
     # Admin config commands run FIRST and everywhere — you have to be able to
@@ -2558,34 +2537,12 @@ async def _handle_message(message: discord.Message):
                                     "a quiz from older files by mistake. Retry the upload, "
                                     "or use `/materials` to choose an existing topic.")
                 return
-            if not rate_limiter.allow("quiz", message.guild.id, message.author.id):
-                await message.reply(
-                    "You’ve made a few quizzes already — give me five minutes, then try again.")
-                return
-            # Quiz only from the material they actually meant. Two people asking
-            # about two subjects at once each get their own; the answer key is
-            # already stored per quiz message, so the two never cross-contaminate.
-            groups = await asyncio.to_thread(get_material_groups, message.channel.id)
-            # Replying to an upload is an explicit choice, stronger than recency.
-            source_message = (message.reference.message_id if message.reference else None)
-            group = await asyncio.to_thread(material_group_for_message,
-                                             source_message, message.channel.id) if source_message else None
-            if not group and ingested:
-                group = await asyncio.to_thread(material_group_for_message,
-                                                 message.id, message.channel.id)
-            if not group:
-                group = await asyncio.to_thread(pick_material_group, text, groups)
-            if groups and group is None:
-                await message.reply(
-                    "I couldn’t match that request to a study set. Check `/materials` "
-                    "for saved topics, or reply to the upload with `@Memlo quiz me`.")
-                return
-            try:
-                prepared = await quiz_service.build(text, message.channel.id, message.guild.id, group)
-                await quiz_service.publish(prepared, message.reply, message.channel.id,
-                                             message.guild.id, message.author.id)
-            except QuizError as exc:
-                await message.reply(str(exc), mention_author=False)
+            await message.reply(
+                "Use **Start quiz** below (or `/quiz`) to choose your study set and "
+                "difficulty. Quizzes are private by default. "
+                "Mentions are for questions about your class material.",
+                view=CommandMenu(sys.modules[__name__], message.author.id, quiz_only=True),
+                mention_author=False)
         else:
             # "ok", "thanks", a lone emoji — replying to us isn't the same as asking
             # us something, and Discord makes every reply look like a mention.

@@ -43,22 +43,26 @@ in Threads**. The human running `/setup` needs Manage Server permission.
 ## Try it out
 
 ```text
-@Memlo what’s due tomorrow?
-@Memlo when is our chemistry quiz?
-@Memlo quiz me on chemical reactions
+/help
+/add-deadline
+/due
+/materials
+/quiz
 ```
 
-To practice from a particular upload, reply to that upload with
-`@Memlo quiz me`. Use **Answer privately** on the quiz for feedback only you can
-see; replying with answers in the channel makes the feedback public.
+**Commands to do things; mentions to ask questions.** `/help` has buttons for
+everyday actions. `/quiz` opens a study-set and difficulty picker: **Warm-up**,
+**Mixed**, or **Challenge**. Quizzes are private by default; turn off the private
+option explicitly to share one with the channel.
 
-Or use `/quiz` to choose a saved study set and a difficulty: **Warm-up**, **Mixed**,
-or **Challenge**. These quizzes are private by default; turn off the private option
-to share one with the channel.
+For optional AI questions, ask `@Memlo explain these notes` or
+`@Memlo what did our teacher say about the lab?`. Mentioning “quiz me” offers a
+button to the same `/quiz` flow—it never guesses a topic or posts a quiz immediately.
+Use **Answer privately** for private grading; replying in a public channel is public.
 
 | Command | What it does |
 | --- | --- |
-| `/help` | Shows examples and a quick guide |
+| `/help` | Opens a button menu and quick guide |
 | `/add-deadline` | Opens an assignment form—no AI required |
 | `/due` | Shows saved upcoming deadlines and their sources |
 | `/materials` | Shows the study sets saved in this channel |

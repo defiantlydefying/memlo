@@ -52,7 +52,7 @@ class QuizTests(DatabaseCase, unittest.IsolatedAsyncioTestCase):
         self.material()
         interaction, _ = self.interaction()
         with patch.object(bot, "make_quiz", return_value=QUIZ):
-            await bot.tree.get_command("quiz").callback(interaction)
+            await bot.tree.get_command("quiz").callback(interaction, "chem")
         self.assertTrue(interaction.response.defer.call_args.kwargs["ephemeral"])
         sent_options = interaction.followup.send.call_args.kwargs
         self.assertTrue(sent_options["ephemeral"])
@@ -100,7 +100,7 @@ class QuizTests(DatabaseCase, unittest.IsolatedAsyncioTestCase):
             bot.rate_limiter.allow("quiz", 1001, 7001)
         interaction, _ = self.interaction()
         with patch.object(bot, "make_quiz") as make:
-            await bot.tree.get_command("quiz").callback(interaction)
+            await bot.tree.get_command("quiz").callback(interaction, "chem")
         make.assert_not_called()
         self.assertIn("five minutes", interaction.followup.send.call_args.args[0])
 
